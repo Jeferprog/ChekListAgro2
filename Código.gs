@@ -25,9 +25,9 @@ function inicializarSistema() {
   Logger.log("✓ Sistema inicializado com sucesso");
 }
 
-// Manter compatibilidade com código anterior
 function inicializarPlanilha() {
   inicializarSistema();
+}
 
 function inicializarSheetLinhas() {
   if (SHEET_LINHAS.getLastRow() === 0) {
@@ -44,7 +44,6 @@ function inicializarSheetLinhas() {
     SHEET_LINHAS.getRange(1, 1, 1, headers.length).setFontWeight("bold").setBackground("#005c46");
     SHEET_LINHAS.getRange(1, 1, 1, headers.length).setFontColor("white");
 
-    // Linha de exemplo
     SHEET_LINHAS.appendRow([
       "L001",
       "PRONAF CUSTEIO AGRÍCOLA Faixa I",
@@ -118,10 +117,11 @@ function inicializarSheetChecklist() {
   }
 }
 
-// Handler principal para servir a aplicação web
+// ==================== HANDLER WEB ====================
+
 function doGet() {
   inicializarPlanilha();
-  return HtmlService.createHtmlOutputFromFile("index")
+  return HtmlService.createHtmlOutputFromFile("Index")
     .setTitle("Cresol Crédito Rural")
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
     .addMetaTag("viewport", "width=device-width, initial-scale=1");
@@ -192,6 +192,295 @@ function salvarLimitesEnquadramento(pronaf, pronamp) {
   return { success: true };
 }
 
+// ==================== MOTOR DE BUSCA E REGRAS ====================
+
+function buscarLinhas(parametros) {
+  try {
+    const dados = SHEET_LINHAS.getDataRange().getValues();
+    if (!dados || dados.length <= 1) return [];
+
+    const headers = dados[0];
+    const linhas = dados.slice(1);
+
+    const resultado = linhas
+      .filter(linha => {
+        try {
+          const statusIdx = headers.indexOf("Status (Ativa/Inativa)");
+          if (statusIdx === -1 || linha[statusIdx] !== "Ativa") return false;
+
+          const enquadramentoIdx = headers.indexOf("Enquadramento (Renda Min/Max)");
+          if (enquadramentoIdx === -1) return false;
+
+          if (parametros.enquadramento) {
+            const grupoLinha = _grupoEnquadramentoLinha(linha[headers.indexOf("Nome Linha")], linha[enquadramentoIdx]);
+            if (grupoLinha !== _grupoAssociado(parametros.enquadramento)) return false;
+          }
+
+          if (!validarRenda(parametros.renda, linha[enquadramentoIdx])) return false;
+
+          const finalidadesIdx = headers.indexOf("Finalidades (tags)");
+          if (finalidadesIdx === -1) return false;
+
+          if (!validarFinalidade(parametros.finalidade, linha[finalidadesIdx])) return false;
+
+          if (!validarProduto(parametros.produto, linha, headers)) return false;
+
+          return true;
+        } catch (e) {
+          return false;
+        }
+      })
+      .map(linha => {
+        try {
+          const culturasTxt = linha[headers.indexOf("Culturas Financiadas")] || "";
+          let limiteMax = parseInt(linha[headers.indexOf("Limite Máx (R$)")]) || 0;
+          let limiteMin = parseInt(linha[headers.indexOf("Limite Min (R$)")]) || 0;
+
+          const cap = _capCultura(parametros.produto, culturasTxt);
+          if (cap) {
+            if (cap.tipo === "max") {
+              if (limiteMax === 0 || cap.valor < limiteMax) limiteMax = cap.valor;
+            } else if (cap.tipo === "min") {
+              if (cap.valor > limiteMin) limiteMin = cap.valor;
+            }
+          }
+
+          return {
+            id: linha[headers.indexOf("ID")] || "",
+            nome: linha[headers.indexOf("Nome Linha")] || "Sem nome",
+            orgao: linha[headers.indexOf("Órgão/Instituição")] || "",
+            finalidade: linha[headers.indexOf("Finalidade Principal")] || "",
+            taxaMin: parseFloat(linha[headers.indexOf("Taxa Mín (%)")]) || 0,
+            taxaMax: parseFloat(linha[headers.indexOf("Taxa Máx (%)")]) || 0,
+            taxaDescricao: linha[headers.indexOf("Taxa (descrição)")] || "",
+            prazo: parseInt(linha[headers.indexOf("Prazo (meses)")]) || 0,
+            carencia: parseInt(linha[headers.indexOf("Carência (meses)")]) || 0,
+            limiteMin: limiteMin,
+            limiteMax: limiteMax,
+            requisitos: linha[headers.indexOf("Requisitos")] || "",
+            documentos: linha[headers.indexOf("Documentos Necessários")] || "",
+            observacoes: linha[headers.indexOf("Observações")] || "",
+            itensFinanciaveis: linha[headers.indexOf("Itens Financiáveis")] || "",
+            culturas: culturasTxt,
+            limiteDisponivel: Math.max(0, limiteMax - (parametros.valorTomado || 0)),
+            valorTomado: parametros.valorTomado || 0
+          };
+        } catch (e) {
+          return null;
+        }
+      })
+      .filter(item => item !== null)
+      .filter(item => {
+        if ((parametros.valorTomado || 0) > 0 && item.limiteMax > 0 && item.limiteDisponivel <= 0) {
+          return false;
+        }
+        return true;
+      });
+
+    registrarConsulta(parametros, resultado.length);
+    return resultado;
+  } catch (e) {
+    Logger.log("Erro em buscarLinhas: " + e);
+    return [];
+  }
+}
+
+function parseValorRenda(parte) {
+  try {
+    if (!parte) return null;
+    const t = String(parte).toLowerCase().trim();
+
+    const m = t.match(/([\d.,]+)/);
+    if (!m) return null;
+
+    let num = parseFloat(m[1].replace(/\s/g, "").replace(",", "."));
+    if (isNaN(num)) return null;
+
+    if (/milh|\bmi\b/.test(t)) {
+      num = num * 1000000;
+    } else if (/\bmil\b/.test(t)) {
+      num = num * 1000;
+    }
+    return num;
+  } catch (e) {
+    return null;
+  }
+}
+
+function validarRenda(renda, enquadramentoTexto) {
+  try {
+    if (!enquadramentoTexto || enquadramentoTexto === "") return true;
+    if (typeof enquadramentoTexto !== "string") return true;
+
+    const t = enquadramentoTexto.toLowerCase();
+
+    if (t.includes("conforme")) return true;
+
+    if (enquadramentoTexto.includes("/")) {
+      const partes = enquadramentoTexto.split("/");
+      const minTexto = partes[0].trim();
+      const maxTexto = partes[1].trim();
+
+      const min = minTexto.toLowerCase().includes("sem limite")
+        ? 0 : (parseValorRenda(minTexto) || 0);
+      const max = maxTexto.toLowerCase().includes("sem limite")
+        ? Infinity : (parseValorRenda(maxTexto) || Infinity);
+
+      return renda >= min && renda <= max;
+    }
+
+    if (t.includes("acima")) {
+      const min = parseValorRenda(enquadramentoTexto);
+      if (min === null) return true;
+      return renda > min;
+    }
+
+    if (t.includes("até") || t.includes("ate")) {
+      const max = parseValorRenda(enquadramentoTexto);
+      if (max === null) return true;
+      return renda <= max;
+    }
+
+    return true;
+  } catch (e) {
+    return true;
+  }
+}
+
+function validarProduto(produtoBuscado, linha, headers) {
+  try {
+    if (!produtoBuscado || typeof produtoBuscado !== "string") return true;
+
+    const normalizar = txt => String(txt || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "");
+
+    const termo = normalizar(produtoBuscado.trim());
+    if (termo === "") return true;
+
+    const camposRelevantes = [
+      "Nome Linha", "Finalidade Principal", "Finalidades (tags)",
+      "Itens Financiáveis", "Culturas Financiadas", "Documentos Necessários", "Observações"
+    ];
+    const textoBusca = normalizar(camposRelevantes
+      .map(c => {
+        const idx = headers.indexOf(c);
+        return idx === -1 ? "" : String(linha[idx] || "");
+      })
+      .join(" "));
+
+    const palavras = termo.split(/\s+/).filter(p => p.length >= 3);
+    if (palavras.length === 0) return true;
+
+    return palavras.some(p => textoBusca.includes(p));
+  } catch (e) {
+    return true;
+  }
+}
+
+function _normalizarTexto(s) {
+  return String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
+function _parseValorTexto(s) {
+  const t = String(s || "").toLowerCase();
+  const m = t.match(/([\d.,]+)/);
+  if (!m) return null;
+  let n = parseFloat(m[1].replace(/\./g, "").replace(",", "."));
+  if (isNaN(n)) return null;
+  if (/milh|\bmi\b/.test(t)) n *= 1000000;
+  else if (/\bmil\b/.test(t)) n *= 1000;
+  return n;
+}
+
+function _capCultura(produtoBuscado, culturasTexto) {
+  try {
+    if (!produtoBuscado || !culturasTexto) return null;
+    const termo = _normalizarTexto(produtoBuscado.trim());
+    if (termo.length < 3) return null;
+    const texto = _normalizarTexto(culturasTexto);
+    const termoEsc = termo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    let m = texto.match(new RegExp(termoEsc + "[^,;()]*\\(\\s*ate\\s*([^)]+)\\)"));
+    if (m) { const v = _parseValorTexto(m[1]); if (v) return { tipo: "max", valor: v }; }
+
+    m = texto.match(new RegExp(termoEsc + "[^,;()]*\\(\\s*acima\\s*de\\s*([^)]+)\\)"));
+    if (m) { const v = _parseValorTexto(m[1]); if (v) return { tipo: "min", valor: v }; }
+
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function _grupoEnquadramentoLinha(nome, enqTexto) {
+  const n = String(nome || "").toUpperCase();
+  if (n.indexOf("PRONAF") !== -1) return "pronaf";
+  if (n.indexOf("PRONAMP") !== -1) return "pronamp";
+  const e = String(enqTexto || "").toLowerCase();
+  if (e.indexOf("sem limite") !== -1) return "pronaf";
+  if (e.indexOf("500 mil") !== -1 && (e.indexOf("3.5") !== -1 || e.indexOf("3,5") !== -1)) return "pronamp";
+  return "demais";
+}
+
+function _grupoAssociado(enquadramento) {
+  if (enquadramento === "pronaf") return "pronaf";
+  if (enquadramento === "pronamp") return "pronamp";
+  return "demais";
+}
+
+function validarFinalidade(finalidadeBuscada, finalidadeLinha) {
+  try {
+    if (!finalidadeBuscada || !finalidadeLinha) return true;
+    if (typeof finalidadeBuscada !== "string" || typeof finalidadeLinha !== "string") return true;
+
+    const tags = finalidadeLinha.toLowerCase().split(",").map(t => t.trim()).filter(t => t);
+    const buscaTermos = finalidadeBuscada.toLowerCase().split(",").map(t => t.trim()).filter(t => t);
+
+    if (tags.length === 0 || buscaTermos.length === 0) return true;
+
+    return buscaTermos.some(termo => tags.some(tag => tag.includes(termo) || termo.includes(tag)));
+  } catch (e) {
+    return true;
+  }
+}
+
+function registrarConsulta(parametros, qtdResultados) {
+  try {
+    if (!SHEET_HISTORICO) return;
+
+    const dataHora = new Date().toLocaleString('pt-BR');
+    const finalidade = parametros.finalidade || "Não especificado";
+    const enquadramento = parametros.enquadramento || "Não especificado";
+    const resultado = `${qtdResultados} linha(s) encontrada(s)`;
+
+    SHEET_HISTORICO.appendRow([
+      dataHora,
+      "Consulta Linha",
+      finalidade,
+      enquadramento,
+      resultado,
+      Session.getActiveUser().getEmail()
+    ]);
+
+    Logger.log("Consulta registrada: " + finalidade + " - " + resultado);
+  } catch (e) {
+    Logger.log("Erro ao registrar consulta: " + e.toString());
+  }
+}
+
+function obterHistorico() {
+  try {
+    const dados = SHEET_HISTORICO.getDataRange().getValues();
+    if (!dados || dados.length <= 1) return [];
+    return dados.slice(1);
+  } catch (e) {
+    Logger.log("Erro ao obter histórico: " + e);
+    return [];
+  }
+}
+
 // ==================== LINHAS DE CRÉDITO ====================
 
 function listarTodasAsLinhas() {
@@ -199,7 +488,6 @@ function listarTodasAsLinhas() {
   const dados = SHEET_LINHAS.getDataRange().getValues();
   if (dados.length <= 1) return [];
 
-  // Carrega checklists customizados
   const checklistLines = [];
   if (SHEET_CHECKLIST) {
     const ckDados = SHEET_CHECKLIST.getDataRange().getValues();
@@ -393,7 +681,6 @@ function obterChecklistDocs(nomeLinha) {
     }
   }
 
-  // Fallback para documentos padrão cadastrados na linha
   const linhas = listarTodasAsLinhas();
   const linhaMatch = linhas.find(l => l.nome === nomeLinha);
   if (linhaMatch && linhaMatch.documentos) {
@@ -415,7 +702,8 @@ function salvarChecklist(nomeLinha, documentosTexto) {
   return { success: true };
 }
 
-// EXTRATOR DOCX SIMULADO NO BACKEND (ALINHADO COM SISTEMA ORIGINAL)
+// ==================== PROCESSAMENTO DE ARQUIVOS ====================
+
 function processarArquivoCresol(arquivoInfo) {
   return {
     success: true,
@@ -429,11 +717,8 @@ function processarArquivoCresol(arquivoInfo) {
 }
 
 function aplicarAtualizacaoCresol(selecionados) {
-  const SS = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = SS.getSheetByName("Linhas");
-  if (!sheet) return { success: false };
-  
-  // Criar linhas selecionadas exatamente idênticas ao sistema de desenvolvimento
+  if (!SHEET_LINHAS) return { success: false };
+
   const simula = [
     {
       nome: "Pronaf Agroindústria (Faixa II)",
@@ -496,7 +781,7 @@ function aplicarAtualizacaoCresol(selecionados) {
       culturas: "PASTAGEM, FORRAGEIRAS"
     }
   ];
-  
+
   let count = 0;
   selecionados.forEach(idx => {
     if (simula[idx]) {
@@ -504,72 +789,70 @@ function aplicarAtualizacaoCresol(selecionados) {
       count++;
     }
   });
-  
+
   return { success: true, linhas: count };
 }
 
 function obterIdDoDrive(link) {
   if (!link) return null;
-  // Match folder ID
   var matchFolder = link.match(/\/folders\/([a-zA-Z0-9-_]+)/);
   if (matchFolder) return { type: "folder", id: matchFolder[1] };
-  // Match file ID
   var matchFile = link.match(/\/file\/d\/([a-zA-Z0-9-_]+)/) || link.match(/id=([a-zA-Z0-9-_]+)/);
   if (matchFile) return { type: "file", id: matchFile[1] };
   return null;
 }
 
+// ==================== IMPORTAÇÃO DE DADOS ====================
+
 function processarECarregarCSVBase(sheet, csvContent) {
   const headers = ["nr_cpf_cnpj", "nr_conta_corrente", "nm_nome", "ds_pessoa_tipo", "vl_anual_fonte_renda_total"];
   sheet.clearContents();
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-  
+
   let delimiter = ",";
   if (csvContent.indexOf(";") !== -1) {
     delimiter = ";";
   }
-  
+
   const parsedData = Utilities.parseCsv(csvContent, delimiter);
   if (parsedData.length <= 1) return 0;
-  
+
   const csvHeaders = parsedData[0].map(function(h) { return h.trim().toLowerCase(); });
-  
+
   const cpfIdx = csvHeaders.indexOf("nr_cpf_cnpj") !== -1 ? csvHeaders.indexOf("nr_cpf_cnpj") : csvHeaders.indexOf("cpf");
   const contaIdx = csvHeaders.indexOf("nr_conta_corrente") !== -1 ? csvHeaders.indexOf("nr_conta_corrente") : csvHeaders.indexOf("conta");
   const nomeIdx = csvHeaders.indexOf("nm_nome") !== -1 ? csvHeaders.indexOf("nm_nome") : csvHeaders.indexOf("nome");
   const tipoIdx = csvHeaders.indexOf("ds_pessoa_tipo") !== -1 ? csvHeaders.indexOf("ds_pessoa_tipo") : csvHeaders.indexOf("tipo");
   const rendaIdx = csvHeaders.indexOf("vl_anual_fonte_renda_total") !== -1 ? csvHeaders.indexOf("vl_anual_fonte_renda_total") : csvHeaders.indexOf("renda");
-  
+
   var recordsAdded = 0;
   var rowsToAppend = [];
-  
+
   for (var i = 1; i < parsedData.length; i++) {
     var row = parsedData[i];
     if (row.length < 2) continue;
-    
+
     var cpf = cpfIdx !== -1 ? String(row[cpfIdx]).trim() : "";
     var conta = contaIdx !== -1 ? String(row[contaIdx]).trim() : "";
     var nome = nomeIdx !== -1 ? String(row[nomeIdx]).trim().toUpperCase() : "";
     var tipo = tipoIdx !== -1 ? String(row[tipoIdx]).trim() : "Física";
-    
+
     var rendaText = rendaIdx !== -1 ? String(row[rendaIdx]).trim() : "0";
     rendaText = rendaText.replace(/[R$\s]/g, "").replace(/\./g, "").replace(",", ".");
     var renda = parseFloat(rendaText) || 0;
-    
+
     if (cpf || conta) {
       rowsToAppend.push([cpf, conta, nome, tipo, renda]);
       recordsAdded++;
     }
   }
-  
+
   if (rowsToAppend.length > 0) {
     sheet.getRange(2, 1, rowsToAppend.length, headers.length).setValues(rowsToAppend);
   }
-  
+
   return recordsAdded;
 }
-
-// ==================== IMPORTAÇÃO DE DADOS ====================
 
 function atualizarBaseAssociados() {
   if (!SHEET_BASE) return { success: false, error: "Aba Base não encontrada." };
@@ -694,4 +977,3 @@ function processarArquivoAssociados(filename, contentText) {
     return { success: false, error: "Erro ao processar arquivo de associados: " + err.message };
   }
 }
-
