@@ -127,6 +127,46 @@ function doGet() {
     .addMetaTag("viewport", "width=device-width, initial-scale=1");
 }
 
+function doPost(e) {
+  try {
+    const file = e.parameter.arquivo || e.parameter.file;
+    if (!file) {
+      return ContentService.createTextOutput(JSON.stringify({
+        sucesso: false,
+        erro: "Nenhum arquivo enviado"
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    const blob = e.parameter[file];
+    if (!blob) {
+      return ContentService.createTextOutput(JSON.stringify({
+        sucesso: false,
+        erro: "Arquivo não encontrado no envio"
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    const filename = blob.getName ? blob.getName() : (file || "arquivo");
+    const content = blob.getDataAsString ? blob.getDataAsString() : String(blob);
+
+    let result;
+    if (filename.toLowerCase().endsWith(".docx")) {
+      result = processarArquivoCresol({ nome: filename, conteudo: content });
+    } else if (filename.toLowerCase().endsWith(".xlsx") || filename.toLowerCase().endsWith(".csv")) {
+      result = processarArquivoCreditoBase({ nome: filename, conteudo: content });
+    } else {
+      result = { sucesso: false, erro: "Tipo de arquivo não suportado" };
+    }
+
+    return ContentService.createTextOutput(JSON.stringify(result))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({
+      sucesso: false,
+      erro: err.toString()
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
 // ==================== CONFIGURAÇÕES (LEITURA & ESCRITA) ====================
 
 function obterValorConfig(parametro) {
@@ -705,15 +745,26 @@ function salvarChecklist(nomeLinha, documentosTexto) {
 // ==================== PROCESSAMENTO DE ARQUIVOS ====================
 
 function processarArquivoCresol(arquivoInfo) {
-  return {
-    success: true,
-    total: 3,
-    itens: [
+  try {
+    // Itens padrão de demonstração
+    const itens = [
       { idx: 0, nome: "Pronaf Agroindústria (Faixa II)", rural: true },
       { idx: 1, nome: "Pronaf Jovem Empreendedor", rural: true },
       { idx: 2, nome: "RenovAgro Recuperação de Pastagens", rural: true }
-    ]
-  };
+    ];
+
+    return {
+      sucesso: true,
+      total: itens.length,
+      itens: itens
+    };
+  } catch (e) {
+    Logger.log("Erro ao processar arquivo Cresol: " + e);
+    return {
+      sucesso: false,
+      erro: "Erro ao processar arquivo: " + e.toString()
+    };
+  }
 }
 
 function aplicarAtualizacaoCresol(selecionados) {
@@ -805,53 +856,70 @@ function obterIdDoDrive(link) {
 // ==================== IMPORTAÇÃO DE DADOS ====================
 
 function processarECarregarCSVBase(sheet, csvContent) {
-  const headers = ["nr_cpf_cnpj", "nr_conta_corrente", "nm_nome", "ds_pessoa_tipo", "vl_anual_fonte_renda_total"];
-  sheet.clearContents();
-  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  try {
+    const headers = ["nr_cpf_cnpj", "nr_conta_corrente", "nm_nome", "ds_pessoa_tipo", "vl_anual_fonte_renda_total"];
+    sheet.clearContents();
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
 
-  let delimiter = ",";
-  if (csvContent.indexOf(";") !== -1) {
-    delimiter = ";";
-  }
-
-  const parsedData = Utilities.parseCsv(csvContent, delimiter);
-  if (parsedData.length <= 1) return 0;
-
-  const csvHeaders = parsedData[0].map(function(h) { return h.trim().toLowerCase(); });
-
-  const cpfIdx = csvHeaders.indexOf("nr_cpf_cnpj") !== -1 ? csvHeaders.indexOf("nr_cpf_cnpj") : csvHeaders.indexOf("cpf");
-  const contaIdx = csvHeaders.indexOf("nr_conta_corrente") !== -1 ? csvHeaders.indexOf("nr_conta_corrente") : csvHeaders.indexOf("conta");
-  const nomeIdx = csvHeaders.indexOf("nm_nome") !== -1 ? csvHeaders.indexOf("nm_nome") : csvHeaders.indexOf("nome");
-  const tipoIdx = csvHeaders.indexOf("ds_pessoa_tipo") !== -1 ? csvHeaders.indexOf("ds_pessoa_tipo") : csvHeaders.indexOf("tipo");
-  const rendaIdx = csvHeaders.indexOf("vl_anual_fonte_renda_total") !== -1 ? csvHeaders.indexOf("vl_anual_fonte_renda_total") : csvHeaders.indexOf("renda");
-
-  var recordsAdded = 0;
-  var rowsToAppend = [];
-
-  for (var i = 1; i < parsedData.length; i++) {
-    var row = parsedData[i];
-    if (row.length < 2) continue;
-
-    var cpf = cpfIdx !== -1 ? String(row[cpfIdx]).trim() : "";
-    var conta = contaIdx !== -1 ? String(row[contaIdx]).trim() : "";
-    var nome = nomeIdx !== -1 ? String(row[nomeIdx]).trim().toUpperCase() : "";
-    var tipo = tipoIdx !== -1 ? String(row[tipoIdx]).trim() : "Física";
-
-    var rendaText = rendaIdx !== -1 ? String(row[rendaIdx]).trim() : "0";
-    rendaText = rendaText.replace(/[R$\s]/g, "").replace(/\./g, "").replace(",", ".");
-    var renda = parseFloat(rendaText) || 0;
-
-    if (cpf || conta) {
-      rowsToAppend.push([cpf, conta, nome, tipo, renda]);
-      recordsAdded++;
+    if (!csvContent || csvContent.trim() === "") {
+      return 0;
     }
-  }
 
-  if (rowsToAppend.length > 0) {
-    sheet.getRange(2, 1, rowsToAppend.length, headers.length).setValues(rowsToAppend);
-  }
+    let delimiter = ",";
+    if (csvContent.indexOf(";") > -1) {
+      delimiter = ";";
+    }
 
-  return recordsAdded;
+    var parsedData;
+    try {
+      parsedData = Utilities.parseCsv(csvContent, delimiter);
+    } catch (e) {
+      delimiter = delimiter === "," ? ";" : ",";
+      parsedData = Utilities.parseCsv(csvContent, delimiter);
+    }
+
+    if (!parsedData || parsedData.length <= 1) return 0;
+
+    const csvHeaders = parsedData[0].map(function(h) { return String(h || "").trim().toLowerCase(); });
+
+    const cpfIdx = csvHeaders.indexOf("nr_cpf_cnpj") !== -1 ? csvHeaders.indexOf("nr_cpf_cnpj") : csvHeaders.indexOf("cpf");
+    const contaIdx = csvHeaders.indexOf("nr_conta_corrente") !== -1 ? csvHeaders.indexOf("nr_conta_corrente") : csvHeaders.indexOf("conta");
+    const nomeIdx = csvHeaders.indexOf("nm_nome") !== -1 ? csvHeaders.indexOf("nm_nome") : csvHeaders.indexOf("nome");
+    const tipoIdx = csvHeaders.indexOf("ds_pessoa_tipo") !== -1 ? csvHeaders.indexOf("ds_pessoa_tipo") : csvHeaders.indexOf("tipo");
+    const rendaIdx = csvHeaders.indexOf("vl_anual_fonte_renda_total") !== -1 ? csvHeaders.indexOf("vl_anual_fonte_renda_total") : csvHeaders.indexOf("renda");
+
+    var recordsAdded = 0;
+    var rowsToAppend = [];
+
+    for (var i = 1; i < parsedData.length; i++) {
+      var row = parsedData[i];
+      if (!row || row.length < 1) continue;
+
+      var cpf = cpfIdx !== -1 ? String(row[cpfIdx] || "").trim() : "";
+      var conta = contaIdx !== -1 ? String(row[contaIdx] || "").trim() : "";
+      var nome = nomeIdx !== -1 ? String(row[nomeIdx] || "").trim().toUpperCase() : "";
+      var tipo = tipoIdx !== -1 ? String(row[tipoIdx] || "").trim() : "Física";
+
+      var rendaText = rendaIdx !== -1 ? String(row[rendaIdx] || "0").trim() : "0";
+      rendaText = rendaText.replace(/[R$\s]/g, "").replace(/\./g, "").replace(",", ".");
+      var renda = parseFloat(rendaText) || 0;
+
+      if (cpf || conta) {
+        rowsToAppend.push([cpf, conta, nome, tipo, renda]);
+        recordsAdded++;
+      }
+    }
+
+    if (rowsToAppend.length > 0) {
+      sheet.getRange(2, 1, rowsToAppend.length, headers.length).setValues(rowsToAppend);
+    }
+
+    Logger.log("Processados " + recordsAdded + " registros da base de associados");
+    return recordsAdded;
+  } catch (err) {
+    Logger.log("Erro ao processar CSV Base: " + err);
+    return 0;
+  }
 }
 
 function atualizarBaseAssociados() {
@@ -901,70 +969,90 @@ function atualizarBaseAssociados() {
   }
 }
 
-function processarArquivoCredito(filename, contentText) {
-  if (!SHEET_BASE_CREDITO) return { success: false, error: "Aba BaseCredito não encontrada." };
+function processarArquivoCreditoBase(arquivoInfo) {
+  if (!SHEET_BASE_CREDITO) return { sucesso: false, error: "Aba BaseCredito não encontrada." };
 
-  const headers = ["nr_cpf_cnpj", "ano_safra", "produto", "atividade", "if_fin", "valor_financiado", "aliquota_proagro", "valor_tomado"];
-  SHEET_BASE_CREDITO.clearContents();
-  SHEET_BASE_CREDITO.getRange(1, 1, 1, headers.length).setValues([headers]);
-
-  var delimiter = ",";
-  if (contentText.indexOf(";") !== -1) {
-    delimiter = ";";
-  }
-
-  var parsedData = Utilities.parseCsv(contentText, delimiter);
-  if (parsedData.length <= 1) {
-    return { success: true, registros: 0 };
-  }
-
-  var csvHeaders = parsedData[0].map(function(h) { return h.trim().toLowerCase(); });
-
-  const cpfIdx = csvHeaders.indexOf("nr_cpf_cnpj") !== -1 ? csvHeaders.indexOf("nr_cpf_cnpj") : csvHeaders.indexOf("cpf");
-  const safraIdx = csvHeaders.indexOf("ano_safra") !== -1 ? csvHeaders.indexOf("ano_safra") : csvHeaders.indexOf("safra");
-  const produtoIdx = csvHeaders.indexOf("produto") !== -1 ? csvHeaders.indexOf("produto") : csvHeaders.indexOf("linha");
-  const atividadeIdx = csvHeaders.indexOf("atividade") !== -1 ? csvHeaders.indexOf("atividade") : csvHeaders.indexOf("cultura");
-  const ifIdx = csvHeaders.indexOf("if_fin") !== -1 ? csvHeaders.indexOf("if_fin") : csvHeaders.indexOf("instituicao");
-  const valorFinIdx = csvHeaders.indexOf("valor_financiado") !== -1 ? csvHeaders.indexOf("valor_financiado") : csvHeaders.indexOf("valor");
-  const proagroIdx = csvHeaders.indexOf("aliquota_proagro") !== -1 ? csvHeaders.indexOf("aliquota_proagro") : csvHeaders.indexOf("proagro");
-  const valorTomIdx = csvHeaders.indexOf("valor_tomado") !== -1 ? csvHeaders.indexOf("valor_tomado") : csvHeaders.indexOf("tomado");
-
-  var count = 0;
-  var rowsToAppend = [];
-
-  for (var i = 1; i < parsedData.length; i++) {
-    var row = parsedData[i];
-    if (row.length < 2) continue;
-
-    var cpf = cpfIdx !== -1 ? String(row[cpfIdx]).trim() : "";
-    var safra = safraIdx !== -1 ? String(row[safraIdx]).trim() : "2025/2026";
-    var produto = produtoIdx !== -1 ? String(row[produtoIdx]).trim().toUpperCase() : "CRÉDITO RURAL";
-    var atividade = atividadeIdx !== -1 ? String(row[atividadeIdx]).trim() : "Outros";
-    var ifFin = ifIdx !== -1 ? String(row[ifIdx]).trim() : "Cresol";
-
-    var valFinText = valorFinIdx !== -1 ? String(row[valorFinIdx]).trim() : "0";
-    valFinText = valFinText.replace(/[R$\s]/g, "").replace(/\./g, "").replace(",", ".");
-    var valFin = parseFloat(valFinText) || 0;
-
-    var aliquotaText = proagroIdx !== -1 ? String(row[proagroIdx]).trim() : "0";
-    aliquotaText = aliquotaText.replace(/[%\s]/g, "").replace(",", ".");
-    var aliquota = parseFloat(aliquotaText) || 0;
-
-    var valTomText = valorTomIdx !== -1 ? String(row[valorTomIdx]).trim() : String(valFin);
-    valTomText = valTomText.replace(/[R$\s]/g, "").replace(/\./g, "").replace(",", ".");
-    var valTom = parseFloat(valTomText) || valFin;
-
-    if (cpf) {
-      rowsToAppend.push([cpf, safra, produto, atividade, ifFin, valFin, aliquota, valTom]);
-      count++;
+  try {
+    const contentText = arquivoInfo.conteudo || arquivoInfo;
+    if (!contentText) {
+      return { sucesso: false, erro: "Arquivo vazio" };
     }
-  }
 
-  if (rowsToAppend.length > 0) {
-    SHEET_BASE_CREDITO.getRange(2, 1, rowsToAppend.length, headers.length).setValues(rowsToAppend);
-  }
+    const headers = ["nr_cpf_cnpj", "ano_safra", "produto", "atividade", "if_fin", "valor_financiado", "aliquota_proagro", "valor_tomado"];
+    SHEET_BASE_CREDITO.clearContents();
+    SHEET_BASE_CREDITO.getRange(1, 1, 1, headers.length).setValues([headers]);
 
-  return { success: true, registros: count };
+    // Detectar delimitador
+    var delimiter = ",";
+    if (contentText.indexOf(";") > -1) {
+      delimiter = ";";
+    }
+
+    // Fazer parse do CSV com tratamento de erro
+    var parsedData;
+    try {
+      parsedData = Utilities.parseCsv(contentText, delimiter);
+    } catch (e) {
+      // Se falhar, tentar com outro delimitador
+      delimiter = delimiter === "," ? ";" : ",";
+      parsedData = Utilities.parseCsv(contentText, delimiter);
+    }
+
+    if (!parsedData || parsedData.length <= 1) {
+      return { sucesso: true, registros: 0, atualizado: new Date().toLocaleString('pt-BR') };
+    }
+
+    var csvHeaders = parsedData[0].map(function(h) { return String(h || "").trim().toLowerCase(); });
+
+    const cpfIdx = csvHeaders.indexOf("nr_cpf_cnpj") !== -1 ? csvHeaders.indexOf("nr_cpf_cnpj") : csvHeaders.indexOf("cpf");
+    const safraIdx = csvHeaders.indexOf("ano_safra") !== -1 ? csvHeaders.indexOf("ano_safra") : csvHeaders.indexOf("safra");
+    const produtoIdx = csvHeaders.indexOf("produto") !== -1 ? csvHeaders.indexOf("produto") : csvHeaders.indexOf("linha");
+    const atividadeIdx = csvHeaders.indexOf("atividade") !== -1 ? csvHeaders.indexOf("atividade") : csvHeaders.indexOf("cultura");
+    const ifIdx = csvHeaders.indexOf("if_fin") !== -1 ? csvHeaders.indexOf("if_fin") : csvHeaders.indexOf("instituicao");
+    const valorFinIdx = csvHeaders.indexOf("valor_financiado") !== -1 ? csvHeaders.indexOf("valor_financiado") : csvHeaders.indexOf("valor");
+    const proagroIdx = csvHeaders.indexOf("aliquota_proagro") !== -1 ? csvHeaders.indexOf("aliquota_proagro") : csvHeaders.indexOf("proagro");
+    const valorTomIdx = csvHeaders.indexOf("valor_tomado") !== -1 ? csvHeaders.indexOf("valor_tomado") : csvHeaders.indexOf("tomado");
+
+    var count = 0;
+    var rowsToAppend = [];
+
+    for (var i = 1; i < parsedData.length; i++) {
+      var row = parsedData[i];
+      if (!row || row.length < 2) continue;
+
+      var cpf = cpfIdx !== -1 ? String(row[cpfIdx] || "").trim() : "";
+      var safra = safraIdx !== -1 ? String(row[safraIdx] || "").trim() : "2025/2026";
+      var produto = produtoIdx !== -1 ? String(row[produtoIdx] || "").trim().toUpperCase() : "CRÉDITO RURAL";
+      var atividade = atividadeIdx !== -1 ? String(row[atividadeIdx] || "").trim() : "Outros";
+      var ifFin = ifIdx !== -1 ? String(row[ifIdx] || "").trim() : "Cresol";
+
+      var valFinText = valorFinIdx !== -1 ? String(row[valorFinIdx] || "0").trim() : "0";
+      valFinText = valFinText.replace(/[R$\s]/g, "").replace(/\./g, "").replace(",", ".");
+      var valFin = parseFloat(valFinText) || 0;
+
+      var aliquotaText = proagroIdx !== -1 ? String(row[proagroIdx] || "0").trim() : "0";
+      aliquotaText = aliquotaText.replace(/[%\s]/g, "").replace(",", ".");
+      var aliquota = parseFloat(aliquotaText) || 0;
+
+      var valTomText = valorTomIdx !== -1 ? String(row[valorTomIdx] || valFin).trim() : String(valFin);
+      valTomText = valTomText.replace(/[R$\s]/g, "").replace(/\./g, "").replace(",", ".");
+      var valTom = parseFloat(valTomText) || valFin;
+
+      if (cpf) {
+        rowsToAppend.push([cpf, safra, produto, atividade, ifFin, valFin, aliquota, valTom]);
+        count++;
+      }
+    }
+
+    if (rowsToAppend.length > 0) {
+      SHEET_BASE_CREDITO.getRange(2, 1, rowsToAppend.length, headers.length).setValues(rowsToAppend);
+    }
+
+    return { sucesso: true, registros: count, atualizado: new Date().toLocaleString('pt-BR') };
+  } catch (err) {
+    Logger.log("Erro ao processar arquivo de crédito: " + err);
+    return { sucesso: false, erro: "Erro ao processar arquivo: " + err.toString() };
+  }
 }
 
 function processarArquivoAssociados(filename, contentText) {
