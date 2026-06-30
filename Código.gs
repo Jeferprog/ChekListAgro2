@@ -95,8 +95,9 @@ function inicializarSheetBase() {
     SHEET_BASE.appendRow(cabecalhos);
     SHEET_BASE.getRange(1, 1, 1, cabecalhos.length).setFontWeight("bold").setBackground("#005c46").setFontColor("white");
 
-    SHEET_BASE.appendRow(["12345678909", "12345-6", "JEFERSON OLIVEIRA DA SILVA", "Física", 350000]);
-    SHEET_BASE.appendRow(["98765432100", "54321-0", "MARIA SOUZA REIS", "Física", 1200000]);
+    // vl_anual_fonte_renda_total guarda a renda MENSAL (apesar do nome)
+    SHEET_BASE.appendRow(["12345678909", "12345-6", "JEFERSON OLIVEIRA DA SILVA", "Física", 29000]);
+    SHEET_BASE.appendRow(["98765432100", "54321-0", "MARIA SOUZA REIS", "Física", 100000]);
   }
 }
 
@@ -645,34 +646,50 @@ function ativarDesativarLinha(id, active) {
 
 // ==================== ASSOCIADOS & CRÉDITO TOMADO ====================
 
+/**
+ * Busca um associado na aba Base por conta ou CPF/CNPJ (somente dígitos).
+ * Observação importante: na base oficial, o campo "vl_anual_fonte_renda_total"
+ * contém a renda MENSAL (apesar do nome) — por isso anualizamos (x12).
+ */
 function buscarAssociado(termo) {
-  if (!SHEET_BASE) return { sucesso: false, error: "Aba Base não encontrada." };
+  try {
+    if (!SHEET_BASE) return { sucesso: false, erro: "Aba Base não encontrada." };
+    if (!termo) return { sucesso: false, erro: "Informe a conta ou o CPF/CNPJ." };
+    const alvo = _chaveDoc(termo);
+    if (!alvo) return { sucesso: false, erro: "Informe um número válido." };
 
-  const termoAlvo = String(termo).replace(/\D/g, "").replace(/^0+/, "");
-  if (!termoAlvo) return { sucesso: false, error: "Termo de busca inválido." };
-
-  const dados = SHEET_BASE.getDataRange().getValues();
-  if (dados.length < 2) return { sucesso: false, error: "Base de associados vazia." };
-
-  const H = dados[0];
-  for (let r = 1; r < dados.length; r++) {
-    const cpf = String(dados[r][H.indexOf("nr_cpf_cnpj")]).replace(/\D/g, "").replace(/^0+/, "");
-    const conta = String(dados[r][H.indexOf("nr_conta_corrente")]).replace(/\D/g, "").replace(/^0+/, "");
-
-    if (cpf === termoAlvo || conta === termoAlvo) {
-      const rendaAnual = parseFloat(dados[r][H.indexOf("vl_anual_fonte_renda_total")]) || 0;
-      return {
-        sucesso: true,
-        nome: String(dados[r][H.indexOf("nm_nome")]),
-        cpfCnpj: String(dados[r][H.indexOf("nr_cpf_cnpj")]),
-        conta: String(dados[r][H.indexOf("nr_conta_corrente")]),
-        tipo: String(dados[r][H.indexOf("ds_pessoa_tipo")]),
-        rendaAnual: rendaAnual,
-        rendaMensal: Math.round(rendaAnual / 12)
-      };
+    const dados = SHEET_BASE.getDataRange().getValues();
+    if (!dados || dados.length < 2) {
+      return { sucesso: false, erro: "Base de associados vazia. Atualize a base na aba Administrativo." };
     }
+
+    const H = dados[0].map(function (h) { return String(h).trim(); });
+    const iCpf = H.indexOf("nr_cpf_cnpj");
+    const iConta = H.indexOf("nr_conta_corrente");
+    const iNome = H.indexOf("nm_nome");
+    const iRenda = H.indexOf("vl_anual_fonte_renda_total");
+    const iTipo = H.indexOf("ds_pessoa_tipo");
+
+    for (let r = 1; r < dados.length; r++) {
+      const cpf = iCpf !== -1 ? _chaveDoc(dados[r][iCpf]) : "";
+      const conta = iConta !== -1 ? _chaveDoc(dados[r][iConta]) : "";
+      if ((cpf && cpf === alvo) || (conta && conta === alvo)) {
+        const rendaMensal = iRenda !== -1 ? _numBR(dados[r][iRenda]) : 0;
+        return {
+          sucesso: true,
+          nome: iNome !== -1 ? (dados[r][iNome] || "") : "",
+          cpfCnpj: iCpf !== -1 ? (dados[r][iCpf] || "") : "",
+          conta: iConta !== -1 ? (dados[r][iConta] || "") : "",
+          tipo: iTipo !== -1 ? (dados[r][iTipo] || "") : "",
+          rendaMensal: rendaMensal,
+          rendaAnual: Math.round(rendaMensal * 12)
+        };
+      }
+    }
+    return { sucesso: false, erro: "Associado não encontrado na base." };
+  } catch (e) {
+    return { sucesso: false, erro: e.toString() };
   }
-  return { sucesso: false, error: "Associado não encontrado." };
 }
 
 function buscarCreditoTomado(cpf) {
@@ -855,117 +872,105 @@ function obterIdDoDrive(link) {
 
 // ==================== IMPORTAÇÃO DE DADOS ====================
 
-function processarECarregarCSVBase(sheet, csvContent) {
-  try {
-    const headers = ["nr_cpf_cnpj", "nr_conta_corrente", "nm_nome", "ds_pessoa_tipo", "vl_anual_fonte_renda_total"];
-    sheet.clearContents();
-    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-
-    if (!csvContent || csvContent.trim() === "") {
-      return 0;
-    }
-
-    let delimiter = ",";
-    if (csvContent.indexOf(";") > -1) {
-      delimiter = ";";
-    }
-
-    var parsedData;
-    try {
-      parsedData = Utilities.parseCsv(csvContent, delimiter);
-    } catch (e) {
-      delimiter = delimiter === "," ? ";" : ",";
-      parsedData = Utilities.parseCsv(csvContent, delimiter);
-    }
-
-    if (!parsedData || parsedData.length <= 1) return 0;
-
-    const csvHeaders = parsedData[0].map(function(h) { return String(h || "").trim().toLowerCase(); });
-
-    const cpfIdx = csvHeaders.indexOf("nr_cpf_cnpj") !== -1 ? csvHeaders.indexOf("nr_cpf_cnpj") : csvHeaders.indexOf("cpf");
-    const contaIdx = csvHeaders.indexOf("nr_conta_corrente") !== -1 ? csvHeaders.indexOf("nr_conta_corrente") : csvHeaders.indexOf("conta");
-    const nomeIdx = csvHeaders.indexOf("nm_nome") !== -1 ? csvHeaders.indexOf("nm_nome") : csvHeaders.indexOf("nome");
-    const tipoIdx = csvHeaders.indexOf("ds_pessoa_tipo") !== -1 ? csvHeaders.indexOf("ds_pessoa_tipo") : csvHeaders.indexOf("tipo");
-    const rendaIdx = csvHeaders.indexOf("vl_anual_fonte_renda_total") !== -1 ? csvHeaders.indexOf("vl_anual_fonte_renda_total") : csvHeaders.indexOf("renda");
-
-    var recordsAdded = 0;
-    var rowsToAppend = [];
-
-    for (var i = 1; i < parsedData.length; i++) {
-      var row = parsedData[i];
-      if (!row || row.length < 1) continue;
-
-      var cpf = cpfIdx !== -1 ? String(row[cpfIdx] || "").trim() : "";
-      var conta = contaIdx !== -1 ? String(row[contaIdx] || "").trim() : "";
-      var nome = nomeIdx !== -1 ? String(row[nomeIdx] || "").trim().toUpperCase() : "";
-      var tipo = tipoIdx !== -1 ? String(row[tipoIdx] || "").trim() : "Física";
-
-      var rendaText = rendaIdx !== -1 ? String(row[rendaIdx] || "0").trim() : "0";
-      rendaText = rendaText.replace(/[R$\s]/g, "").replace(/\./g, "").replace(",", ".");
-      var renda = parseFloat(rendaText) || 0;
-
-      if (cpf || conta) {
-        rowsToAppend.push([cpf, conta, nome, tipo, renda]);
-        recordsAdded++;
-      }
-    }
-
-    if (rowsToAppend.length > 0) {
-      sheet.getRange(2, 1, rowsToAppend.length, headers.length).setValues(rowsToAppend);
-    }
-
-    Logger.log("Processados " + recordsAdded + " registros da base de associados");
-    return recordsAdded;
-  } catch (err) {
-    Logger.log("Erro ao processar CSV Base: " + err);
-    return 0;
-  }
+/**
+ * Converte um valor monetário em formato brasileiro para número.
+ * Ex.: "R$ 1.234,56" -> 1234.56 ; "1500" -> 1500.
+ */
+function _numBR(v) {
+  if (v === null || v === undefined || v === "") return 0;
+  if (typeof v === "number") return v;
+  let s = String(v).replace(/[^\d.,\-]/g, "");
+  if (s.indexOf(",") !== -1) s = s.replace(/\./g, "").replace(",", ".");
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
 }
 
+/**
+ * Chave de comparação de documento/conta: só dígitos, sem zeros à esquerda.
+ * Resolve o caso da base que perde zeros iniciais de CPF (ex.: digitar
+ * "01234567890" encontra o registro "1234567890").
+ */
+function _chaveDoc(v) {
+  return String(v || "").replace(/\D/g, "").replace(/^0+/, "");
+}
+
+/**
+ * Lê o conteúdo do CSV a partir de um link de PASTA ou ARQUIVO do Google
+ * Drive, de uma URL direta, ou de um ID solto do Drive.
+ */
+function _lerCsvDoLink(link, filename) {
+  // Link de pasta do Drive
+  const mFolder = link.match(/folders\/([a-zA-Z0-9_\-]+)/);
+  if (mFolder) {
+    const folder = DriveApp.getFolderById(mFolder[1]);
+    const it = folder.getFilesByName(filename);
+    if (it.hasNext()) return it.next().getBlob().getDataAsString("UTF-8");
+    const its = folder.getFiles();
+    while (its.hasNext()) {
+      const f = its.next();
+      if (f.getName().toLowerCase().indexOf(".csv") !== -1) return f.getBlob().getDataAsString("UTF-8");
+    }
+    return null;
+  }
+  // Link de arquivo do Drive (/d/<id> ou ?id=<id>)
+  const idm = link.match(/(?:\/d\/|id=)([a-zA-Z0-9_\-]+)/);
+  if (idm) return DriveApp.getFileById(idm[1]).getBlob().getDataAsString("UTF-8");
+  // URL direta
+  if (/^https?:\/\//.test(link)) return UrlFetchApp.fetch(link).getContentText();
+  // Talvez seja só um ID
+  const mId = link.match(/^[a-zA-Z0-9_\-]{20,}$/);
+  if (mId) return DriveApp.getFileById(link).getBlob().getDataAsString("UTF-8");
+  return null;
+}
+
+/**
+ * Grava o conteúdo de um CSV diretamente na aba Base, preservando os
+ * cabeçalhos e colunas originais do arquivo (não força colunas fixas).
+ * Detecta o delimitador pela primeira linha e normaliza a largura das linhas.
+ */
+function _gravarCsvNaBase(conteudo) {
+  if (!conteudo || conteudo.trim() === "") {
+    return { sucesso: false, erro: "CSV vazio ou inválido." };
+  }
+
+  const primeiraLinha = conteudo.split("\n")[0] || "";
+  const delim = (primeiraLinha.split(";").length > primeiraLinha.split(",").length) ? ";" : ",";
+  const dados = Utilities.parseCsv(conteudo, delim);
+  if (!dados || dados.length < 2) return { sucesso: false, erro: "CSV vazio ou inválido." };
+
+  // Normaliza a largura das linhas (todas com o mesmo nº de colunas do cabeçalho)
+  const largura = dados[0].length;
+  const norm = dados.map(function (r) {
+    const linha = r.slice(0, largura);
+    while (linha.length < largura) linha.push("");
+    return linha;
+  });
+
+  SHEET_BASE.clear();
+  SHEET_BASE.getRange(1, 1, norm.length, largura).setValues(norm);
+  SHEET_BASE.getRange(1, 1, 1, largura).setFontWeight("bold").setBackground("#005c46").setFontColor("white");
+
+  return { sucesso: true, registros: norm.length - 1, atualizado: new Date().toLocaleString("pt-BR") };
+}
+
+/**
+ * Busca o basedepessoas.csv no link configurado e regrava a aba Base.
+ * Também é chamada pelo trigger automático de atualização diária.
+ */
 function atualizarBaseAssociados() {
-  if (!SHEET_BASE) return { success: false, error: "Aba Base não encontrada." };
-
-  const linkBase = obterValorConfig("Link Pasta Base de Associados");
-  if (!linkBase) {
-    return { success: false, error: "Link da Pasta Base de Associados não configurado nas Configurações." };
-  }
-
-  const driveInfo = obterIdDoDrive(linkBase);
-  if (!driveInfo) {
-    return { success: false, error: "Link de pasta inválido. Por favor, insira um link válido do Google Drive." };
-  }
-
   try {
-    var file;
-    if (driveInfo.type === "file") {
-      file = DriveApp.getFileById(driveInfo.id);
-    } else {
-      var folder = DriveApp.getFolderById(driveInfo.id);
-      var files = folder.getFiles();
-      while (files.hasNext()) {
-        var f = files.next();
-        var fName = f.getName().toLowerCase();
-        if (fName.includes("basedepessoas") || fName.endsWith(".csv")) {
-          file = f;
-          break;
-        }
-      }
-    }
+    if (!SHEET_BASE) return { sucesso: false, erro: "Aba Base não encontrada." };
 
-    if (!file) {
-      return { success: false, error: "Nenhum arquivo 'basedepessoas.csv' ou arquivo .csv correspondente encontrado na pasta do Drive." };
-    }
+    const link = obterLinkBase();
+    if (!link) return { sucesso: false, erro: "Configure o link da pasta/arquivo da base na aba Administrativo." };
 
-    var contentText = file.getBlob().getDataAsString("UTF-8");
-    if (contentText.indexOf("") !== -1 || contentText.indexOf("") !== -1) {
-      contentText = file.getBlob().getDataAsString("ISO-8859-1");
-    }
+    const conteudo = _lerCsvDoLink(link, "basedepessoas.csv");
+    if (!conteudo) return { sucesso: false, erro: "Arquivo basedepessoas.csv não encontrado no link informado." };
 
-    var numLines = processarECarregarCSVBase(SHEET_BASE, contentText);
-    return { success: true, registros: numLines };
-
-  } catch (err) {
-    return { success: false, error: "Erro ao acessar arquivos do Google Drive: " + err.message };
+    return _gravarCsvNaBase(conteudo);
+  } catch (e) {
+    Logger.log("Erro em atualizarBaseAssociados: " + e.toString());
+    return { sucesso: false, erro: e.toString() };
   }
 }
 
@@ -1056,12 +1061,11 @@ function processarArquivoCreditoBase(arquivoInfo) {
 }
 
 function processarArquivoAssociados(filename, contentText) {
-  if (!SHEET_BASE) return { success: false, error: "Aba Base não encontrada." };
+  if (!SHEET_BASE) return { sucesso: false, erro: "Aba Base não encontrada." };
 
   try {
-    var numLines = processarECarregarCSVBase(SHEET_BASE, contentText);
-    return { success: true, registros: numLines };
+    return _gravarCsvNaBase(contentText);
   } catch (err) {
-    return { success: false, error: "Erro ao processar arquivo de associados: " + err.message };
+    return { sucesso: false, erro: "Erro ao processar arquivo de associados: " + err.toString() };
   }
 }
