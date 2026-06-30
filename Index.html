@@ -1,0 +1,1706 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Cresol - Crédito Rural</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  <!-- Roboto Font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- React and Babel CDNs for single-file operation -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    /* Design Tokens de acordo com a Identidade Oficial */
+    :root {
+      --primary-green: #005c46;
+      --accent-orange: #f58220;
+      --bg-body: #f8f9fa;
+      --bg-card: #ffffff;
+      --text-dark: #212529;
+      --text-gray: #6c757d;
+      --border-gray: #dee2e6;
+      --success-green: #28a745;
+      --danger-red: #dc3545;
+      --info-blue: #0d6efd;
+      --border-radius: 8px;
+    }
+
+    body {
+      font-family: 'Roboto', sans-serif;
+      background-color: var(--bg-body);
+      color: var(--text-dark);
+      margin: 0;
+      padding: 0;
+    }
+
+    /* Cores personalizadas do Tailwind para combinar com a identidade */
+    .bg-primary-green { background-color: var(--primary-green); }
+    .text-primary-green { color: var(--primary-green); }
+    .border-primary-green { border-color: var(--primary-green); }
+    
+    .bg-accent-orange { background-color: var(--accent-orange); }
+    .text-accent-orange { color: var(--accent-orange); }
+    .border-accent-orange { border-color: var(--accent-orange); }
+    
+    .text-text-dark { color: var(--text-dark); }
+    .text-text-gray { color: var(--text-gray); }
+    .border-border-gray { border-color: var(--border-gray); }
+
+    /* Scrollbar minimalista */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f1f1;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #c1c1c1;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #a8a8a8;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="root"></div>
+
+  <!-- Componentes em React usando Babel compiler -->
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    // --- ÍCONES INLINE SVG PARA MÁXIMA COMPATIBILIDADE E ROBUSTEZ ---
+    const IconSearch = () => (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+    );
+    const IconSliders = () => (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+    );
+    const IconUser = () => (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+    );
+    const IconTrendingUp = () => (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
+    );
+    const IconClipboardList = () => (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
+    );
+    const IconCheck = () => (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg>
+    );
+    const IconPlus = () => (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4"/></svg>
+    );
+    const IconRefresh = () => (
+      <svg className="w-4 h-4 animate-spin-slow" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H17"/></svg>
+    );
+    const IconUpload = () => (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+    );
+    const IconInfo = () => (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    );
+    const IconWarning = () => (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+    );
+    const IconMapPin = () => (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+    );
+    const IconSettings = () => (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+    );
+
+    // --- GOOGLE APPS SCRIPT WRAPPER DE SEGURANÇA ---
+    const runGas = (methodName, ...args) => {
+      return new Promise((resolve, reject) => {
+        if (typeof window !== "undefined" && window.google && window.google.script) {
+          window.google.script.run
+            .withSuccessHandler(result => resolve(result))
+            .withFailureHandler(error => reject(error))[methodName](...args);
+        } else {
+          // Fallback para desenvolvimento local
+          console.warn(`Executando mock para o método ${methodName}`);
+          setTimeout(() => {
+            if (methodName === "obterLinkConsulta") resolve("https://www.bcb.gov.br/sicor/");
+            else if (methodName === "obterLinkBase") resolve("https://drive.google.com/drive/folders/exemplo");
+            else if (methodName === "obterEmailsAdmin") resolve(["gestor@cresol.com.br", "analista@cresol.com.br"]);
+            else if (methodName === "obterLimitesEnquadramento") resolve({ pronaf: 250000, pronamp: 1500000 });
+            else if (methodName === "listarTodasAsLinhas") resolve([
+              { id: "L-001", nome: "PRONAF CUSTEIO AGRÍCOLA - Faixa I", orgao: "Cresol / BNDES", finalidadePrincipal: "Custeio", finalidades: "agricola,custeio", enquadramento: "Sem limite/R$ 500 mil", taxaMin: 3, taxaMax: 4.5, taxaDescricao: "3% a 4.5% a.a.", prazo: 24, carencia: 3, limiteMin: 5000, limiteMax: 250000, requisitos: "DAP ativa", documentos: "(P) RG\n(P) DAP/CAF Ativa", status: "Ativa", observacoes: "", itensFinanciaveis: "Sementes, defensivos", culturas: "MILHO (até 25 mil), SOJA, TRIGO" }
+            ]);
+            else if (methodName === "buscarAssociado") resolve({
+              sucesso: true, nome: "JEFERSON OLIVEIRA DA SILVA", cpfCnpj: "12345678909", conta: "12345-6", tipo: "Física", rendaAnual: 350000, rendaMensal: 29166
+            });
+            else if (methodName === "buscarCreditoTomado") resolve({
+              sucesso: true, items: [{ anoSafra: "2025/2026", produto: "PRONAF CUSTEIO AGRÍCOLA", atividade: "Milho", ifFin: "Cresol", valorFinanciado: 45000, aliquotaProagro: 3, valorTomado: 46350 }], totalFinanciado: 46350
+            });
+            else if (methodName === "obterChecklistDocs") resolve(["RG e CPF", "DAP/CAF Ativa", "Matrícula da Terra"]);
+            else resolve({ success: true });
+          }, 600);
+        }
+      });
+    };
+
+    // --- COMPONENTE PRINCIPAL ---
+    function App() {
+      const [currentTab, setCurrentTab] = useState("consulta");
+      const [loading, setLoading] = useState(false);
+      const [loadingText, setLoadingText] = useState("Carregando...");
+      const [configs, setConfigs] = useState([]);
+      const [limites, setLimites] = useState({ pronaf: 250000, pronamp: 1500000 });
+      const [linhas, setLinhas] = useState([]);
+      const [searchResult, setSearchResult] = useState([]);
+      const [searchPerformed, setSearchPerformed] = useState(false);
+      
+      // Form de Consulta / Simulador
+      const [buscaCpf, setBuscaCpf] = useState("");
+      const [associadoData, setAssociadoData] = useState(null);
+      const [creditHistory, setCreditHistory] = useState([]);
+      const [paramFinalidade, setParamFinalidade] = useState("");
+      const [paramProduto, setParamProduto] = useState("");
+      const [customRenda, setCustomRenda] = useState("");
+      const [customValorTomado, setCustomValorTomado] = useState("");
+      const [customEnquadramento, setCustomEnquadramento] = useState("demais");
+      const [autoEnquadramento, setAutoEnquadramento] = useState(true);
+
+      // Controle de Modais
+      const [showAddModal, setShowAddModal] = useState(false);
+      const [showEditModal, setShowEditModal] = useState(false);
+      const [selectedLine, setSelectedLine] = useState(null);
+      const [showChecklistModal, setShowChecklistModal] = useState(false);
+      const [checklistLineName, setChecklistLineName] = useState("");
+      const [checklistItems, setChecklistItems] = useState([]);
+      const [showDocxParser, setShowDocxParser] = useState(false);
+      const [docxItems, setDocxItems] = useState([]);
+
+      // Formulário para Cadastrar/Editar Linha
+      const [lineForm, setLineForm] = useState({
+        nome: "", orgao: "Cresol", finalidadePrincipal: "Custeio", finalidades: "",
+        enquadramento: "", taxaMin: "", taxaMax: "", taxaDescricao: "",
+        prazo: "", carencia: "", limiteMin: "", limiteMax: "",
+        requisitos: "", documentos: "", status: "Ativa", observacoes: "",
+        itensFinanciaveis: "", culturas: ""
+      });
+
+      // Carregar dados iniciais
+      useEffect(() => {
+        carregarConfiguracoes();
+        carregarLinhas();
+      }, []);
+
+      const carregarConfiguracoes = async () => {
+        try {
+          const l = await runGas("obterLimitesEnquadramento");
+          setLimites(l);
+          const linkCons = await runGas("obterLinkConsulta");
+          const linkB = await runGas("obterLinkBase");
+          const emails = await runGas("obterEmailsAdmin");
+          setConfigs([
+            { param: "Link Consulta Crédito (SICOR/CACR)", valor: linkCons },
+            { param: "Link Pasta Base de Associados", valor: linkB },
+            { param: "E-mails Administradores", valor: emails.join(", ") }
+          ]);
+        } catch (e) {
+          console.error(e);
+        }
+      };
+
+      const carregarLinhas = async () => {
+        setLoading(true);
+        setLoadingText("Carregando linhas de crédito...");
+        try {
+          const res = await runGas("listarTodasAsLinhas");
+          setLinhas(res);
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      // Auto-enquadramento baseado na renda do associado
+      useEffect(() => {
+        if (autoEnquadramento && associadoData) {
+          const renda = associadoData.rendaAnual;
+          if (renda <= limites.pronaf) {
+            setCustomEnquadramento("pronaf");
+          } else if (renda <= limites.pronamp) {
+            setCustomEnquadramento("pronamp");
+          } else {
+            setCustomEnquadramento("demais");
+          }
+        }
+      }, [associadoData, limites, autoEnquadramento]);
+
+      // Busca de associado no bando de dados
+      const handleBuscarAssociado = async () => {
+        if (!buscaCpf) return;
+        setLoading(true);
+        setLoadingText("Buscando dados do associado...");
+        try {
+          const assoc = await runGas("buscarAssociado", buscaCpf);
+          if (assoc.sucesso) {
+            setAssociadoData(assoc);
+            setCustomRenda(assoc.rendaAnual);
+            // Buscar crédito já tomado
+            const cred = await runGas("buscarCreditoTomado", assoc.cpfCnpj);
+            if (cred.sucesso) {
+              setCreditHistory(cred.items);
+              setCustomValorTomado(cred.totalFinanciado);
+            } else {
+              setCreditHistory([]);
+              setCustomValorTomado(0);
+            }
+          } else {
+            alert("Associado não cadastrado na base oficial da Cresol.");
+            setAssociadoData(null);
+            setCreditHistory([]);
+            setCustomValorTomado("");
+          }
+        } catch (err) {
+          console.error(err);
+          alert("Erro ao consultar associado.");
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      // MECANISMO DE CORRESPONDÊNCIA / BUSCAR LINHAS (FRONTEND MATCHING)
+      const handleBuscarLinhas = () => {
+        setLoading(true);
+        setLoadingText("Processando enquadramento...");
+        
+        setTimeout(() => {
+          const renda = parseFloat(customRenda) || 0;
+          const valorTomado = parseFloat(customValorTomado) || 0;
+          const activeLines = linhas.filter(l => l.status === "Ativa");
+
+          const helperGroupLinha = (nome, enqTexto) => {
+            const n = String(nome || "").toUpperCase();
+            if (n.includes("PRONAF")) return "pronaf";
+            if (n.includes("PRONAMP")) return "pronamp";
+            const e = String(enqTexto || "").toLowerCase();
+            if (e.includes("sem limite")) return "pronaf";
+            if (e.includes("500 mil") && (e.includes("3.5") || e.includes("3,5") || e.includes("1.5") || e.includes("1,5"))) return "pronamp";
+            return "demais";
+          };
+
+          const helperParseRenda = (texto) => {
+            if (!texto) return null;
+            const t = texto.toLowerCase();
+            const m = t.match(/([\d.,]+)/);
+            if (!m) return null;
+            let num = parseFloat(m[1].replace(/\s/g, "").replace(",", "."));
+            if (isNaN(num)) return null;
+            if (t.includes("milh") || t.includes("mi")) num *= 1000000;
+            else if (t.includes("mil")) num *= 1000;
+            return num;
+          };
+
+          const helperValidarRenda = (rendaVal, enqTexto) => {
+            if (!enqTexto || enqTexto === "" || enqTexto.includes("conforme")) return true;
+            if (enqTexto.includes("/")) {
+              const parts = enqTexto.split("/");
+              const minText = parts[0].trim();
+              const maxText = parts[1].trim();
+              const min = minText.toLowerCase().includes("sem limite") ? 0 : (helperParseRenda(minText) || 0);
+              const max = maxText.toLowerCase().includes("sem limite") ? Infinity : (helperParseRenda(maxText) || Infinity);
+              return rendaVal >= min && rendaVal <= max;
+            }
+            if (enqTexto.toLowerCase().includes("acima")) {
+              const min = helperParseRenda(enqTexto);
+              return min === null ? true : rendaVal > min;
+            }
+            if (enqTexto.toLowerCase().includes("até") || enqTexto.toLowerCase().includes("ate")) {
+              const max = helperParseRenda(enqTexto);
+              return max === null ? true : rendaVal <= max;
+            }
+            return true;
+          };
+
+          const helperValidarTags = (searched, tagsText) => {
+            if (!searched || !tagsText) return true;
+            const tags = tagsText.toLowerCase().split(",").map(t => t.trim()).filter(Boolean);
+            const searchTerms = searched.toLowerCase().split(",").map(t => t.trim()).filter(Boolean);
+            if (tags.length === 0 || searchTerms.length === 0) return true;
+            return searchTerms.some(term => tags.some(tag => tag.includes(term) || term.includes(tag)));
+          };
+
+          const helperKeywordMatch = (searched, line) => {
+            if (!searched) return true;
+            const term = searched.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+            if (!term || term.length < 3) return true;
+            const textToSearch = [
+              line.nome, line.finalidadePrincipal, line.finalidades,
+              line.itensFinanciaveis, line.culturas, line.documentos, line.observacoes
+            ].join(" ").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+            return term.split(/\s+/).some(word => textToSearch.includes(word));
+          };
+
+          const helperCapCultura = (productText, culturesText) => {
+            if (!productText || !culturesText) return null;
+            const term = productText.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+            if (term.length < 3) return null;
+            const cultures = culturesText.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+            const matchMax = cultures.match(new RegExp(term + "[^,;()]*\\(\\s*ate\\s*([^)]+)\\)"));
+            if (matchMax) {
+              const v = helperParseRenda(matchMax[1]);
+              if (v) return { tipo: "max", valor: v };
+            }
+            const matchMin = cultures.match(new RegExp(term + "[^,;()]*\\(\\s*acima\\s*de\\s*([^)]+)\\)"));
+            if (matchMin) {
+              const v = helperParseRenda(matchMin[1]);
+              if (v) return { tipo: "min", valor: v };
+            }
+            return null;
+          };
+
+          const matched = activeLines
+            .filter(l => {
+              // Validar grupo
+              const lineGroup = helperGroupLinha(l.nome, l.enquadramento);
+              if (lineGroup !== customEnquadramento) return false;
+
+              // Validar renda
+              if (!helperValidarRenda(renda, l.enquadramento)) return false;
+
+              // Validar tags
+              if (!helperValidarTags(paramFinalidade, l.finalidades)) return false;
+
+              // Validar palavra chave
+              if (!helperKeywordMatch(paramProduto || "", l)) return false;
+
+              return true;
+            })
+            .map(l => {
+              let maxLimit = l.limiteMax;
+              let minLimit = l.limiteMin;
+              let capCulturaValor = 0;
+              let capCulturaTipo = "";
+
+              const cap = helperCapCultura(paramProduto || "", l.culturas);
+              if (cap) {
+                if (cap.tipo === "max") {
+                  if (maxLimit === 0 || cap.valor < maxLimit) maxLimit = cap.valor;
+                  capCulturaValor = cap.valor;
+                  capCulturaTipo = "max";
+                } else if (cap.tipo === "min") {
+                  if (cap.valor > minLimit) minLimit = cap.valor;
+                  capCulturaValor = cap.valor;
+                  capCulturaTipo = "min";
+                }
+              }
+
+              const available = Math.max(0, maxLimit - valorTomado);
+
+              return {
+                ...l,
+                limiteMax: maxLimit,
+                limiteMin: minLimit,
+                limiteDisponivel: available,
+                valorTomado: valorTomado,
+                capCulturaValor,
+                capCulturaTipo
+              };
+            })
+            .filter(l => {
+              if (valorTomado > 0 && l.limiteMax > 0 && l.limiteDisponivel <= 0) {
+                return false;
+              }
+              return true;
+            });
+
+          setSearchResult(matched);
+          setSearchPerformed(true);
+          setLoading(false);
+        }, 500);
+      };
+
+      const limparFormSimulador = () => {
+        setBuscaCpf("");
+        setAssociadoData(null);
+        setCreditHistory([]);
+        setParamFinalidade("");
+        setParamProduto("");
+        setCustomRenda("");
+        setCustomValorTomado("");
+        setCustomEnquadramento("demais");
+        setAutoEnquadramento(true);
+        setSearchResult([]);
+        setSearchPerformed(false);
+      };
+
+      // SALVAR CONFIGURAÇÕES
+      const handleSaveConfig = async (param, valor) => {
+        setLoading(true);
+        setLoadingText("Salvando configuração...");
+        try {
+          if (param === "Link Consulta Crédito (SICOR/CACR)") {
+            await runGas("salvarLinkConsulta", valor);
+          } else if (param === "Link Pasta Base de Associados") {
+            await runGas("salvarLinkBase", valor);
+          } else if (param === "E-mails Administradores") {
+            await runGas("salvarEmailsAdmin", valor);
+          }
+          await carregarConfiguracoes();
+          alert("Configuração salva com sucesso!");
+        } catch (e) {
+          console.error(e);
+          alert("Erro ao salvar configuração.");
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const handleSaveLimites = async () => {
+        setLoading(true);
+        setLoadingText("Salvando limites...");
+        try {
+          await runGas("salvarLimitesEnquadramento", parseFloat(limites.pronaf), parseFloat(limites.pronamp));
+          alert("Limites salvos com sucesso!");
+        } catch (e) {
+          console.error(e);
+          alert("Erro ao salvar limites.");
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      // STATUS TOGGLE LINHA
+      const handleToggleStatus = async (id, currentStatus) => {
+        setLoading(true);
+        setLoadingText("Atualizando status da linha...");
+        try {
+          const nextActive = currentStatus === "Inativa";
+          await runGas("ativarDesativarLinha", id, nextActive);
+          await carregarLinhas();
+        } catch (e) {
+          console.error(e);
+          alert("Erro ao alterar status.");
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      // ABRIR CADASTRO/EDIÇÃO
+      const openAddModal = () => {
+        setLineForm({
+          nome: "", orgao: "Cresol", finalidadePrincipal: "Custeio", finalidades: "",
+          enquadramento: "Até R$ 500 mil", taxaMin: "3.0", taxaMax: "5.0", taxaDescricao: "3% a 5% a.a.",
+          prazo: "24", carencia: "3", limiteMin: "1000", limiteMax: "250000",
+          requisitos: "", documentos: "", status: "Ativa", observacoes: "",
+          itensFinanciaveis: "", culturas: ""
+        });
+        setShowAddModal(true);
+      };
+
+      const openEditModal = (line) => {
+        setSelectedLine(line);
+        setLineForm({
+          nome: line.nome, orgao: line.orgao, finalidadePrincipal: line.finalidadePrincipal, finalidades: line.finalidades,
+          enquadramento: line.enquadramento, taxaMin: String(line.taxaMin), taxaMax: String(line.taxaMax), taxaDescricao: line.taxaDescricao,
+          prazo: String(line.prazo), carencia: String(line.carencia), limiteMin: String(line.limiteMin), limiteMax: String(line.limiteMax),
+          requisitos: line.requisitos, documentos: line.documentos, status: line.status, observacoes: line.observacoes,
+          itensFinanciaveis: line.itensFinanciaveis, culturas: line.culturas
+        });
+        setShowEditModal(true);
+      };
+
+      // SALVAR / ATUALIZAR LINHA
+      const handleCreateLine = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        setLoadingText("Criando linha de crédito...");
+        try {
+          await runGas("adicionarLinha", {
+            ...lineForm,
+            taxaMin: parseFloat(lineForm.taxaMin) || 0,
+            taxaMax: parseFloat(lineForm.taxaMax) || 0,
+            prazo: parseInt(lineForm.prazo) || 0,
+            carencia: parseInt(lineForm.carencia) || 0,
+            limiteMin: parseFloat(lineForm.limiteMin) || 0,
+            limiteMax: parseFloat(lineForm.limiteMax) || 0
+          });
+          setShowAddModal(false);
+          await carregarLinhas();
+          alert("Linha de crédito adicionada!");
+        } catch (err) {
+          console.error(err);
+          alert("Erro ao salvar linha.");
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const handleUpdateLine = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        setLoadingText("Atualizando linha de crédito...");
+        try {
+          const ptData = {
+            "Nome Linha": lineForm.nome,
+            "Órgão/Instituição": lineForm.orgao,
+            "Finalidade Principal": lineForm.finalidadePrincipal,
+            "Finalidades (tags)": lineForm.finalidades,
+            "Enquadramento (Renda Min/Max)": lineForm.enquadramento,
+            "Taxa Mín (%)": parseFloat(lineForm.taxaMin) || 0,
+            "Taxa Máx (%)": parseFloat(lineForm.taxaMax) || 0,
+            "Prazo (meses)": parseInt(lineForm.prazo) || 0,
+            "Carência (meses)": parseInt(lineForm.carencia) || 0,
+            "Limite Min (R$)": parseFloat(lineForm.limiteMin) || 0,
+            "Limite Máx (R$)": parseFloat(lineForm.limiteMax) || 0,
+            "Documentos Necessários": lineForm.documentos,
+            "Requisitos": lineForm.requisitos,
+            "Observações": lineForm.observacoes,
+            "Itens Financiáveis": lineForm.itensFinanciaveis,
+            "Culturas Financiadas": lineForm.culturas,
+            "Taxa (descrição)": lineForm.taxaDescricao,
+            "Status (Ativa/Inativa)": lineForm.status
+          };
+          await runGas("atualizarLinha", selectedLine.id, ptData);
+          setShowEditModal(false);
+          await carregarLinhas();
+          alert("Linha atualizada com sucesso!");
+        } catch (err) {
+          console.error(err);
+          alert("Erro ao atualizar.");
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      // VER CHECKLIST DE DOCUMENTOS CUSTOMIZADO
+      const handleOpenChecklist = async (nomeLinha) => {
+        setChecklistLineName(nomeLinha);
+        setLoading(true);
+        setLoadingText("Carregando checklist...");
+        try {
+          const docs = await runGas("obterChecklistDocs", nomeLinha);
+          setChecklistItems(docs.map(text => ({ text, checked: false })));
+          setShowChecklistModal(true);
+        } catch (e) {
+          console.error(e);
+          alert("Erro ao obter checklist.");
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const toggleChecklistItem = (idx) => {
+        const next = [...checklistItems];
+        next[idx].checked = !next[idx].checked;
+        setChecklistItems(next);
+      };
+
+      // SALVAR CUSTOM CHECKLIST
+      const handleSaveChecklistCustom = async () => {
+        setLoading(true);
+        setLoadingText("Salvando checklist...");
+        try {
+          const text = checklistItems.map(i => i.text).join("\n");
+          await runGas("_salvarChecklist", checklistLineName, text);
+          alert("Checklist atualizado com sucesso!");
+        } catch (e) {
+          console.error(e);
+          alert("Erro ao salvar.");
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      // SINCRONIZAR BASE ASSOCIADOS (CSV DRIVE)
+      const handleSyncBase = async () => {
+        setLoading(true);
+        setLoadingText("Sincronizando base de associados com Google Drive...");
+        try {
+          const resp = await runGas("atualizarBaseAssociados");
+          if (resp && resp.success) {
+            alert(`✓ Base de associados sincronizada! ${resp.registros} registros atualizados.`);
+          } else {
+            alert("✕ Falha ao sincronizar: " + (resp.error || "Erro desconhecido"));
+          }
+        } catch (e) {
+          console.error(e);
+          alert("✕ Erro de conexão com o Drive. Verifique se as permissões foram autorizadas no Apps Script.");
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      // IMPORTAR BASE ASSOCIADOS LOCAL (CSV)
+      const handleCsvAssociateUpload = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        setLoading(true);
+        setLoadingText("Processando arquivo de associados...");
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          try {
+            const text = event.target.result;
+            const resp = await runGas("processarArquivoAssociados", file.name, text);
+            if (resp && resp.success) {
+              alert(`✓ Base de associados atualizada! ${resp.registros} associados importados.`);
+            } else {
+              alert("✕ Erro ao processar arquivo: " + (resp.error || "Formato inválido."));
+            }
+          } catch (err) {
+            console.error(err);
+            alert("✕ Erro: " + err.message);
+          } finally {
+            setLoading(false);
+            e.target.value = "";
+          }
+        };
+        reader.readAsText(file);
+      };
+
+      // IMPORTAR BASE DE CRÉDITO (XLSX / CSV)
+      const handleXlsxCreditUpload = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        setLoading(true);
+        setLoadingText("Processando arquivo de crédito tomada...");
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          try {
+            const text = event.target.result;
+            const resp = await runGas("processarArquivoCredito", file.name, text);
+            if (resp && resp.success) {
+              alert(`✓ Base de crédito tomada atualizada! ${resp.registros} registros importados.`);
+            } else {
+              alert("✕ Erro ao processar arquivo: " + (resp.error || "Formato inválido."));
+            }
+          } catch (err) {
+            console.error(err);
+            alert("✕ Erro: " + err.message);
+          } finally {
+            setLoading(false);
+            e.target.value = "";
+          }
+        };
+        reader.readAsText(file);
+      };
+
+      // PARSER SIMULADO DOCX (ESTILO MANUAL FÁCIL)
+      const handleSimulateDocx = async () => {
+        setLoading(true);
+        setLoadingText("Processando normativo DOCX Cresol...");
+        try {
+          const res = await runGas("processarArquivoCresol", "Circular_Cresol_2026.docx", "");
+          setDocxItems(res.itens.map(i => ({ ...i, selecionado: true })));
+          setShowDocxParser(true);
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const handleConfirmDocx = async () => {
+        const indexes = docxItems.filter(i => i.selecionado).map(i => i.idx);
+        if (indexes.length === 0) {
+          setShowDocxParser(false);
+          return;
+        }
+        setLoading(true);
+        setLoadingText("Importando linhas...");
+        try {
+          const res = await runGas("aplicarAtualizacaoCresol", indexes);
+          alert(`Sucesso! ${res.linhas} novas linhas foram integradas com base no documento.`);
+          setShowDocxParser(false);
+          await carregarLinhas();
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const toggleDocxItem = (idx) => {
+        const next = [...docxItems];
+        next[idx].selecionado = !next[idx].selecionado;
+        setDocxItems(next);
+      };
+
+      return (
+        <div className="min-h-screen flex flex-col bg-[#f8f9fa] pb-12">
+          
+          {/* HEADER INSTITUCIONAL */}
+          <header className="bg-primary-green text-white shadow-md relative overflow-hidden">
+            <div className="max-w-[1250px] mx-auto px-6 py-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 relative z-10">
+              <div>
+                <div className="flex items-center gap-3">
+                  <h1 className="text-2xl font-bold tracking-tight">Cresol Crédito Rural</h1>
+                  <span className="bg-accent-orange text-white text-[11px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider shadow-sm">
+                    Ciclo 2026
+                  </span>
+                </div>
+                <p className="text-white/80 text-xs italic mt-1 font-light">
+                  Última sincronização de base oficial: Hoje, {new Date().toLocaleDateString("pt-BR")}
+                </p>
+              </div>
+
+              {/* Botão de Ação Direta do Header */}
+              <div className="flex gap-2.5">
+                <button
+                  onClick={() => window.open("https://www.bcb.gov.br/sicor/", "_blank")}
+                  className="bg-accent-orange text-white text-xs font-bold px-4 py-2.5 rounded hover:bg-opacity-95 transition-all shadow flex items-center gap-1.5"
+                >
+                  <IconMapPin />
+                  <span>Acessar SICOR (BCB)</span>
+                </button>
+                <button
+                  onClick={carregarLinhas}
+                  className="bg-white/10 text-white text-xs font-bold px-3 py-2.5 rounded hover:bg-white/20 transition-all flex items-center gap-1.5 border border-white/20"
+                  title="Atualizar dados do painel"
+                >
+                  <IconRefresh />
+                </button>
+              </div>
+            </div>
+          </header>
+
+          {/* TABS DE NAVEGAÇÃO PRINCIPAIS */}
+          <div className="bg-white border-b border-border-gray shadow-xs">
+            <div className="max-w-[1250px] mx-auto px-6 flex gap-1">
+              <button
+                onClick={() => setCurrentTab("consulta")}
+                className={`py-4 px-5 text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${
+                  currentTab === "consulta"
+                    ? "border-accent-orange text-primary-green"
+                    : "border-transparent text-text-gray hover:text-text-dark"
+                }`}
+              >
+                <IconSearch />
+                <span>Simulador & Consultas</span>
+              </button>
+              <button
+                onClick={() => setCurrentTab("linhas")}
+                className={`py-4 px-5 text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${
+                  currentTab === "linhas"
+                    ? "border-accent-orange text-primary-green"
+                    : "border-transparent text-text-gray hover:text-text-dark"
+                }`}
+              >
+                <IconClipboardList />
+                <span>Linhas de Crédito</span>
+              </button>
+              <button
+                onClick={() => setCurrentTab("config")}
+                className={`py-4 px-5 text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${
+                  currentTab === "config"
+                    ? "border-accent-orange text-primary-green"
+                    : "border-transparent text-text-gray hover:text-text-dark"
+                }`}
+              >
+                <IconSettings />
+                <span>Configurações do Sistema</span>
+              </button>
+            </div>
+          </div>
+
+          {/* ÁREA DE CONTEÚDO PRINCIPAL (1250px) */}
+          <main className="max-w-[1250px] w-full mx-auto px-6 mt-6 flex-1">
+            
+            {/* KPI ROW */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-6">
+              <div className="bg-white p-5 rounded-lg border border-border-gray shadow-xs border-l-4 border-accent-orange">
+                <span className="text-text-gray text-xs uppercase font-bold tracking-wider">Linhas de Crédito Rural</span>
+                <div className="text-3xl font-bold text-primary-green mt-1">{linhas.length} Ativas</div>
+                <div className="text-[11px] text-text-gray mt-1">Sincronizadas com o normativo Cresol</div>
+              </div>
+              <div className="bg-white p-5 rounded-lg border border-border-gray shadow-xs border-l-4 border-primary-green">
+                <span className="text-text-gray text-xs uppercase font-bold tracking-wider">Acesso SICOR</span>
+                <div className="text-3xl font-bold text-text-dark mt-1">Conexão Estável</div>
+                <div className="text-[11px] text-text-gray mt-1">Consultas em conformidade com o BCB</div>
+              </div>
+              <div className="bg-white p-5 rounded-lg border border-border-gray shadow-xs border-l-4 border-[#0d6efd]">
+                <span className="text-text-gray text-xs uppercase font-bold tracking-wider">Enquadramentos</span>
+                <div className="text-3xl font-bold text-[#0d6efd] mt-1">Automático</div>
+                <div className="text-[11px] text-text-gray mt-1">Filtros dinâmicos e pré-análise</div>
+              </div>
+            </div>
+
+            {/* TAB CONTENT: SIMULADOR & CONSULTAS */}
+            {currentTab === "consulta" && (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                
+                {/* COLUNA ESQUERDA: ENTRADA DE FILTROS */}
+                <div className="lg:col-span-1 flex flex-col gap-5">
+                  
+                  {/* CARD 1: BUSCAR ASSOCIADO */}
+                  <div className="bg-white p-5 rounded-lg border border-border-gray shadow-xs border-l-4 border-accent-orange">
+                    <div className="flex items-center gap-2 text-primary-green border-b border-border-gray/50 pb-2 mb-4">
+                      <IconUser />
+                      <h2 className="font-bold text-sm">Consultar Associado</h2>
+                    </div>
+                    
+                    <div className="flex flex-col gap-3">
+                      <label className="text-xs font-bold text-text-dark">CPF, CNPJ ou Conta Corrente</label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={buscaCpf}
+                          onChange={e => setBuscaCpf(e.target.value)}
+                          placeholder="Digite o CPF ou Conta..."
+                          className="flex-1 text-sm border border-border-gray rounded px-3 py-2 focus:ring-1 focus:ring-primary-green focus:outline-none"
+                        />
+                        <button
+                          onClick={handleBuscarAssociado}
+                          className="bg-primary-green text-white px-4 py-2 rounded font-bold text-xs hover:bg-opacity-95 transition-all flex items-center gap-1 shadow-sm"
+                        >
+                          Buscar
+                        </button>
+                      </div>
+                      <span className="text-[10px] text-text-gray italic">
+                        Insira 12345678909 para simular um associado existente.
+                      </span>
+                    </div>
+
+                    {/* DADOS DO ASSOCIADO RETORNADO */}
+                    {associadoData && (
+                      <div className="mt-4 p-3.5 bg-slate-50 border border-border-gray/60 rounded flex flex-col gap-2">
+                        <div className="text-xs font-bold text-primary-green truncate">{associadoData.nome}</div>
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <span className="text-text-gray block text-[10px] uppercase font-bold">Tipo Pessoa</span>
+                            <span className="font-medium">{associadoData.tipo}</span>
+                          </div>
+                          <div>
+                            <span className="text-text-gray block text-[10px] uppercase font-bold">Conta</span>
+                            <span className="font-medium">{associadoData.conta}</span>
+                          </div>
+                          <div className="col-span-2 border-t border-border-gray/40 pt-1">
+                            <span className="text-text-gray block text-[10px] uppercase font-bold">Renda Anual Declarada</span>
+                            <span className="font-bold text-primary-green">R$ {associadoData.rendaAnual.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                            <span className="text-text-gray text-[10px] block font-light">R$ {associadoData.rendaMensal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} /mês</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* CARD 2: PARÂMETROS ADICIONAIS DO SIMULADOR */}
+                  <div className="bg-white p-5 rounded-lg border border-border-gray shadow-xs">
+                    <div className="flex items-center gap-2 text-primary-green border-b border-border-gray/50 pb-2 mb-4">
+                      <IconSliders />
+                      <h2 className="font-bold text-sm">Parâmetros de Consulta</h2>
+                    </div>
+
+                    <div className="flex flex-col gap-4">
+                      
+                      {/* Renda Anual (Manual/Automática) */}
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs font-bold text-text-dark">Renda Bruta Anual (R$)</label>
+                        <input
+                          type="number"
+                          value={customRenda}
+                          onChange={e => {
+                            setCustomRenda(e.target.value);
+                            setAssociadoData(null); // Desvincula para alteração manual
+                          }}
+                          placeholder="Informe a Renda Anual..."
+                          className="text-sm border border-border-gray rounded px-3 py-2 focus:ring-1 focus:ring-primary-green focus:outline-none"
+                        />
+                      </div>
+
+                      {/* Enquadramento */}
+                      <div className="flex flex-col gap-2">
+                        <div className="flex justify-between items-center">
+                          <label className="text-xs font-bold text-text-dark">Grupo de Enquadramento</label>
+                          <label className="flex items-center gap-1.5 text-[11px] text-primary-green font-medium cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={autoEnquadramento}
+                              onChange={e => setAutoEnquadramento(e.target.checked)}
+                              className="rounded accent-primary-green"
+                            />
+                            Auto
+                          </label>
+                        </div>
+                        <select
+                          value={customEnquadramento}
+                          onChange={e => {
+                            setCustomEnquadramento(e.target.value);
+                            setAutoEnquadramento(false);
+                          }}
+                          disabled={autoEnquadramento && !!associadoData}
+                          className="text-sm border border-border-gray rounded px-3 py-2 bg-white focus:outline-none"
+                        >
+                          <option value="pronaf">PRONAF (Até R$ {limites.pronaf.toLocaleString()})</option>
+                          <option value="pronamp">PRONAMP (Até R$ {limites.pronamp.toLocaleString()})</option>
+                          <option value="demais">Demais Produtores / Médio-Grande</option>
+                        </select>
+                      </div>
+
+                      {/* Crédito Tomado Atual */}
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs font-bold text-text-dark">Valor de Crédito Custeio Rural já Tomado (R$)</label>
+                        <input
+                          type="number"
+                          value={customValorTomado}
+                          onChange={e => setCustomValorTomado(e.target.value)}
+                          placeholder="Zero se não houver"
+                          className="text-sm border border-border-gray rounded px-3 py-2 focus:outline-none"
+                        />
+                      </div>
+
+                      {/* Finalidade */}
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs font-bold text-text-dark">Finalidade do Crédito (Tags ex: agricola, pecuaria)</label>
+                        <input
+                          type="text"
+                          value={paramFinalidade}
+                          onChange={e => setParamFinalidade(e.target.value)}
+                          placeholder="Custeio, investimento, etc..."
+                          className="text-sm border border-border-gray rounded px-3 py-2 focus:outline-none"
+                        />
+                      </div>
+
+                      {/* Produto Específico */}
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs font-bold text-text-dark">Cultura ou Produto Desejado (ex: milho, soja, colheitadeira)</label>
+                        <input
+                          type="text"
+                          value={paramProduto}
+                          onChange={e => setParamProduto(e.target.value)}
+                          placeholder="Digite a cultura agrícola..."
+                          className="text-sm border border-border-gray rounded px-3 py-2 focus:outline-none"
+                        />
+                      </div>
+
+                      <div className="flex gap-2 pt-2">
+                        <button
+                          onClick={handleBuscarLinhas}
+                          className="flex-1 bg-accent-orange text-white py-2.5 rounded font-bold text-xs hover:bg-opacity-95 transition-all shadow-sm text-center"
+                        >
+                          Simular & Enquadrar
+                        </button>
+                        <button
+                          onClick={limparFormSimulador}
+                          className="border border-border-gray text-text-gray hover:text-text-dark px-3 rounded text-xs transition-all"
+                        >
+                          Limpar
+                        </button>
+                      </div>
+
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* COLUNAS DIREITA: HISTÓRICO DE CRÉDITO TOMADO E RESULTADO DA SIMULAÇÃO */}
+                <div className="lg:col-span-2 flex flex-col gap-5">
+                  
+                  {/* HISTÓRICO DE CRÉDITO SE TIVER ASSOCIADO */}
+                  {associadoData && creditHistory.length > 0 && (
+                    <div className="bg-white p-5 rounded-lg border border-border-gray shadow-xs">
+                      <div className="flex items-center gap-2 text-primary-green border-b border-border-gray/50 pb-2 mb-3">
+                        <IconTrendingUp />
+                        <h2 className="font-bold text-sm">Linhas Ativas Já Contratadas (Histórico SICOR)</h2>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="border-b border-border-gray text-text-gray font-bold">
+                              <th className="py-2">Safra</th>
+                              <th className="py-2">Produto</th>
+                              <th className="py-2">Atividade</th>
+                              <th className="py-2">IF Financeira</th>
+                              <th className="py-2 text-right">Valor Tomado (R$)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {creditHistory.map((h, i) => (
+                              <tr key={i} className="border-b border-border-gray/30 hover:bg-slate-50">
+                                <td className="py-2 font-medium">{h.anoSafra}</td>
+                                <td className="py-2">{h.produto}</td>
+                                <td className="py-2">{h.atividade}</td>
+                                <td className="py-2">{h.ifFin}</td>
+                                <td className="py-2 text-right font-bold text-[#dc3545]">
+                                  R$ {h.valorTomado.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* RESULTADOS DA SIMULAÇÃO */}
+                  <div className="bg-white p-6 rounded-lg border border-border-gray shadow-xs flex-1">
+                    <div className="flex justify-between items-center border-b border-border-gray/50 pb-3 mb-4">
+                      <div className="flex items-center gap-2 text-primary-green">
+                        <IconClipboardList />
+                        <h2 className="font-bold text-sm">Linhas de Crédito Enquadradas Disponíveis</h2>
+                      </div>
+                      <span className="text-xs text-text-gray font-bold">
+                        {searchPerformed ? `${searchResult.length} linha(s) encontrada(s)` : "Aguardando simulação"}
+                      </span>
+                    </div>
+
+                    {!searchPerformed ? (
+                      <div className="flex flex-col items-center justify-center py-16 text-text-gray gap-2">
+                        <IconInfo />
+                        <p className="text-sm font-bold mt-1">Preencha os dados do simulador e clique em "Simular & Enquadrar".</p>
+                        <p className="text-xs text-center max-w-md font-light">
+                          O sistema cruzará a renda anual do associado, limite total permitido, créditos já tomados e culturas financiadas para listar as opções ideais da Cresol.
+                        </p>
+                      </div>
+                    ) : searchResult.length === 0 ? (
+                      <div className="bg-red-50 border border-red-200 p-5 rounded-lg text-red-800 text-sm flex flex-col gap-2">
+                        <div className="font-bold flex items-center gap-1.5 text-danger-red">
+                          <IconWarning />
+                          <span>Atenção: Nenhum enquadramento disponível.</span>
+                        </div>
+                        <p className="font-light">
+                          O associado não preencheu os requisitos mínimos para as linhas de crédito ativas para este grupo ({customEnquadramento.toUpperCase()}) ou excedeu o limite máximo disponível subtraído do valor já tomado (R$ {parseFloat(customValorTomado || 0).toLocaleString("pt-BR")}).
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-4">
+                        {searchResult.map((l) => (
+                          <div
+                            key={l.id}
+                            className="bg-white border border-border-gray hover:border-primary-green transition-all rounded-lg p-5 shadow-xs relative border-l-4 border-l-primary-green"
+                          >
+                            <div className="flex flex-col md:flex-row justify-between items-start gap-2">
+                              <div>
+                                <span className="bg-[#0d6efd] text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
+                                  {l.orgao}
+                                </span>
+                                <h3 className="font-bold text-base text-primary-green mt-1">{l.nome}</h3>
+                              </div>
+                              <button
+                                onClick={() => handleOpenChecklist(l.nome)}
+                                className="bg-accent-orange text-white text-xs font-bold px-3 py-1.5 rounded hover:bg-opacity-95 transition-all flex items-center gap-1.5 shadow-sm"
+                              >
+                                <IconCheck />
+                                <span>Gerar Checklist</span>
+                              </button>
+                            </div>
+
+                            {/* Informações de Teto e Detalhes da Linha */}
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 pt-3 border-t border-border-gray/40 text-xs">
+                              <div>
+                                <span className="text-text-gray block text-[10px] uppercase font-bold">Taxas Aplicadas</span>
+                                <span className="font-bold text-text-dark">{l.taxaDescricao || `${l.taxaMin}% a.a.`}</span>
+                              </div>
+                              <div>
+                                <span className="text-text-gray block text-[10px] uppercase font-bold">Prazo / Carência</span>
+                                <span className="font-medium text-text-dark">{l.prazo} m ({l.carencia}m carência)</span>
+                              </div>
+                              <div>
+                                <span className="text-text-gray block text-[10px] uppercase font-bold">Teto Máximo da Linha</span>
+                                <span className="font-bold text-text-dark">R$ {l.limiteMax.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                              </div>
+                              <div>
+                                <span className="text-text-gray block text-[10px] uppercase font-bold">Saldo Disponível Estimado</span>
+                                <span className="font-bold text-success-green">R$ {l.limiteDisponivel.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                              </div>
+                            </div>
+
+                            {/* Alerta de Ajuste por Limitação de Cultura do Pronaf */}
+                            {l.capCulturaValor > 0 && (
+                              <div className="mt-3.5 p-2.5 bg-amber-50 border border-amber-200 text-[11px] text-amber-800 rounded flex items-center gap-2">
+                                <IconInfo />
+                                <span>
+                                  <strong>Nota:</strong> O limite máximo foi recalculado para <strong>R$ {l.capCulturaValor.toLocaleString("pt-BR")}</strong> de acordo com a cultura informada ("{paramProduto.toUpperCase()}") estabelecida na regra do Pronaf.
+                                </span>
+                              </div>
+                            )}
+
+                            {/* Itens Financiáveis e Requisitos adicionais */}
+                            <div className="mt-3 text-xs flex flex-col gap-1.5 text-text-gray bg-slate-50 p-3 rounded border border-border-gray/40 font-light">
+                              <div>
+                                <strong>Itens Financiáveis:</strong> {l.itensFinanciaveis || "Gerais para a modalidade"}
+                              </div>
+                              <div>
+                                <strong>Requisitos Específicos:</strong> {l.requisitos || "Apresentação de documentação regular básica"}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                </div>
+              </div>
+            )}
+
+            {/* TAB CONTENT: TABELA DE GERENCIAMENTO DE LINHAS DE CRÉDITO */}
+            {currentTab === "linhas" && (
+              <div className="bg-white p-6 rounded-lg border border-border-gray shadow-xs">
+                
+                {/* SUBHEADER COM AÇÕES */}
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-border-gray pb-4 mb-4">
+                  <div>
+                    <h2 className="text-lg font-bold text-primary-green">Normativos e Linhas Cadastradas</h2>
+                    <p className="text-xs text-text-gray font-light">Cadastre novas linhas ou integre atualizações via circular DOCX Cresol.</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSimulateDocx}
+                      className="bg-primary-green text-white text-xs font-bold px-4 py-2.5 rounded hover:bg-opacity-95 transition-all flex items-center gap-1.5 shadow-sm"
+                    >
+                      <IconUpload />
+                      <span>Importar via DOCX Cresol</span>
+                    </button>
+                    <button
+                      onClick={openAddModal}
+                      className="bg-accent-orange text-white text-xs font-bold px-4 py-2.5 rounded hover:bg-opacity-95 transition-all flex items-center gap-1.5 shadow-sm"
+                    >
+                      <IconPlus />
+                      <span>Cadastrar Linha Manual</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* TABELA DE LINHAS */}
+                <div className="overflow-x-auto border border-border-gray rounded">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="bg-primary-green text-white uppercase tracking-wider text-[11px] font-bold">
+                      <tr>
+                        <th className="py-3 px-4">Linha de Crédito</th>
+                        <th className="py-3 px-4">Órgão</th>
+                        <th className="py-3 px-4">Grupo</th>
+                        <th className="py-3 px-4">Taxas</th>
+                        <th className="py-3 px-4 text-right">Limite Máx</th>
+                        <th className="py-3 px-4">Status</th>
+                        <th className="py-3 px-4 text-center">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border-gray">
+                      {linhas.map((l) => (
+                        <tr key={l.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-3.5 px-4 font-bold text-primary-green max-w-xs truncate">{l.nome}</td>
+                          <td className="py-3.5 px-4 font-medium">{l.orgao}</td>
+                          <td className="py-3.5 px-4 font-medium">{l.finalidadePrincipal}</td>
+                          <td className="py-3.5 px-4">{l.taxaDescricao || `${l.taxaMin}% a.a.`}</td>
+                          <td className="py-3.5 px-4 text-right font-bold text-text-dark">
+                            R$ {l.limiteMax.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <span
+                              onClick={() => handleToggleStatus(l.id, l.status)}
+                              className={`cursor-pointer px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                                l.status === "Ativa"
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : "bg-rose-100 text-rose-800"
+                              }`}
+                            >
+                              {l.status}
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4 text-center">
+                            <div className="flex justify-center gap-2">
+                              <button
+                                onClick={() => openEditModal(l)}
+                                className="text-primary-green hover:underline font-bold text-xs"
+                              >
+                                Editar
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* TAB CONTENT: CONFIGURAÇÕES DO SISTEMA */}
+            {currentTab === "config" && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  
+                  {/* PARÂMETROS GERAIS */}
+                  <div className="bg-white p-6 rounded-lg border border-border-gray shadow-xs">
+                    <div className="border-b border-border-gray pb-2 mb-4">
+                      <h2 className="text-sm font-bold text-primary-green uppercase tracking-wider">Parâmetros Operacionais e Links</h2>
+                    </div>
+                    
+                    <div className="flex flex-col gap-5">
+                      {configs.map((c, i) => (
+                        <div key={i} className="flex flex-col gap-1.5">
+                          <label className="text-xs font-bold text-text-dark">{c.param}</label>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              defaultValue={c.valor}
+                              id={`cfg-${i}`}
+                              className="flex-1 text-xs border border-border-gray rounded px-3 py-2 focus:outline-none"
+                            />
+                            <button
+                              onClick={() => {
+                                const val = document.getElementById(`cfg-${i}`).value;
+                                handleSaveConfig(c.param, val);
+                              }}
+                              className="bg-primary-green text-white text-xs font-bold px-3 py-2 rounded hover:bg-opacity-95"
+                            >
+                              Salvar
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* LIMITES DE ENQUADRAMENTO DE COOPERATIVADO */}
+                  <div className="bg-white p-6 rounded-lg border border-border-gray shadow-xs">
+                    <div className="border-b border-border-gray pb-2 mb-4">
+                      <h2 className="text-sm font-bold text-primary-green uppercase tracking-wider">Limites de Enquadramento Oficial (R$)</h2>
+                    </div>
+
+                    <div className="flex flex-col gap-4">
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-bold text-text-dark">Teto Renda Bruta Anual PRONAF</label>
+                        <input
+                          type="number"
+                          value={limites.pronaf}
+                          onChange={e => setLimites({ ...limites, pronaf: parseFloat(e.target.value) || 0 })}
+                          className="text-xs border border-border-gray rounded px-3 py-2.5 font-bold focus:outline-none"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-bold text-text-dark">Teto Renda Bruta Anual PRONAMP</label>
+                        <input
+                          type="number"
+                          value={limites.pronamp}
+                          onChange={e => setLimites({ ...limites, pronamp: parseFloat(e.target.value) || 0 })}
+                          className="text-xs border border-border-gray rounded px-3 py-2.5 font-bold focus:outline-none"
+                        />
+                      </div>
+
+                      <button
+                        onClick={handleSaveLimites}
+                        className="bg-accent-orange text-white text-xs font-bold py-2.5 rounded hover:bg-opacity-95 transition-all mt-4"
+                      >
+                        Atualizar Limites de Enquadramento
+                      </button>
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* CARD: IMPORTAÇÃO E SINCRONIZAÇÃO DE BASES */}
+                <div className="bg-white p-6 rounded-lg border border-border-gray shadow-xs border-l-4 border-accent-orange">
+                  <div className="border-b border-border-gray pb-2 mb-4 flex items-center gap-2">
+                    <svg className="w-5 h-5 text-accent-orange" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                    <h2 className="text-sm font-bold text-primary-green uppercase tracking-wider">Sincronização e Importação de Bases</h2>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                     {/* Sincronizar Base Associados (CSV no Drive / Local) */}
+                     <div className="flex flex-col gap-2 border border-border-gray/40 p-4 rounded-lg bg-slate-50">
+                       <div className="flex items-center gap-3">
+                         <div className="w-10 h-10 rounded bg-green-50 text-green-600 flex items-center justify-center">
+                           <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18"/></svg>
+                         </div>
+                         <div>
+                           <h3 className="text-xs font-bold text-text-dark">Sincronizar Base Associados</h3>
+                           <p className="text-[10px] text-text-gray mt-0.5">Google Drive ou CSV local (basedepessoas.csv)</p>
+                         </div>
+                       </div>
+                       <div className="flex gap-2 mt-4">
+                         <button
+                           onClick={handleSyncBase}
+                           className="flex-1 bg-primary-green hover:bg-opacity-95 text-white text-xs font-bold py-2 rounded transition-all cursor-pointer"
+                           title="Sincronizar via Google Drive"
+                         >
+                           Sincronizar Drive
+                         </button>
+                         <input
+                           type="file"
+                           id="csvAssociateInputGas"
+                           accept=".csv"
+                           onChange={handleCsvAssociateUpload}
+                           className="hidden"
+                         />
+                         <button
+                           onClick={() => document.getElementById("csvAssociateInputGas")?.click()}
+                           className="flex-1 border border-primary-green text-primary-green hover:bg-green-50/20 text-xs font-bold py-2 rounded transition-all cursor-pointer"
+                           title="Carregar arquivo basedepessoas.csv local"
+                         >
+                           Upload Local
+                         </button>
+                       </div>
+                     </div>
+
+                    {/* Importar Base de Crédito Tomado (XLSX/CSV local) */}
+                    <div className="flex flex-col gap-2 border border-border-gray/40 p-4 rounded-lg bg-slate-50">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded bg-amber-50 text-amber-600 flex items-center justify-center">
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                        </div>
+                        <div>
+                          <h3 className="text-xs font-bold text-text-dark">Importar Base de Crédito</h3>
+                          <p className="text-[10px] text-text-gray mt-0.5">Extensão .xlsx ou .csv (créditos tomados)</p>
+                        </div>
+                      </div>
+                      <input
+                        type="file"
+                        id="xlsxInputGas"
+                        accept=".xlsx,.csv"
+                        onChange={handleXlsxCreditUpload}
+                        className="hidden"
+                      />
+                      <button
+                        onClick={() => document.getElementById("xlsxInputGas")?.click()}
+                        className="mt-4 w-full border border-accent-orange text-accent-orange hover:bg-amber-50/20 text-xs font-bold py-2 rounded transition-all cursor-pointer"
+                      >
+                        Selecionar e Carregar Arquivo
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            )}
+
+          </main>
+
+          {/* --- MODAL 1: CHECKLIST DE DOCUMENTAÇÃO --- */}
+          {showChecklistModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+              <div className="bg-white rounded-lg border-l-4 border-accent-orange max-w-lg w-full p-6 shadow-xl relative animate-fadeIn">
+                <div className="border-b border-border-gray/50 pb-3 mb-4 flex justify-between items-center">
+                  <div>
+                    <h3 className="font-bold text-primary-green text-base">Checklist de Documentação Exigida</h3>
+                    <p className="text-xs text-text-gray font-light mt-0.5">{checklistLineName}</p>
+                  </div>
+                  <button onClick={() => setShowChecklistModal(false)} className="text-text-gray hover:text-text-dark font-bold text-xl">&times;</button>
+                </div>
+
+                <div className="flex flex-col gap-2 max-h-60 overflow-y-auto mb-4 p-1">
+                  {checklistItems.map((item, i) => (
+                    <label key={i} className="flex items-start gap-2.5 py-1.5 px-2 bg-slate-50 border border-border-gray/30 rounded cursor-pointer hover:bg-slate-100/70 transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={item.checked}
+                        onChange={() => toggleChecklistItem(i)}
+                        className="rounded accent-primary-green mt-1 cursor-pointer"
+                      />
+                      <span className={`text-xs ${item.checked ? "line-through text-text-gray" : "text-text-dark font-medium"}`}>
+                        {item.text}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+
+                <div className="flex justify-between items-center pt-2 border-t border-border-gray/40">
+                  <span className="text-[10px] text-text-gray font-bold uppercase">
+                    Pendente: {checklistItems.filter(i => !i.checked).length} item(ns)
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSaveChecklistCustom}
+                      className="bg-primary-green text-white text-xs font-bold px-3 py-1.5 rounded hover:bg-opacity-95"
+                    >
+                      Salvar Checklist
+                    </button>
+                    <button
+                      onClick={() => setShowChecklistModal(false)}
+                      className="border border-border-gray text-xs font-bold text-text-gray px-3 py-1.5 rounded"
+                    >
+                      Fechar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* --- MODAL 2: IMPORTAÇÃO E STAGING DOCX --- */}
+          {showDocxParser && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+              <div className="bg-white rounded-lg border-l-4 border-accent-orange max-w-xl w-full p-6 shadow-xl relative">
+                <div className="border-b border-border-gray pb-3 mb-4">
+                  <h3 className="font-bold text-primary-green text-base">Processador Normativo Cresol (Importação)</h3>
+                  <p className="text-xs text-text-gray font-light mt-0.5">As linhas de crédito abaixo foram identificadas no Circular_Cresol_2026.docx</p>
+                </div>
+
+                <div className="flex flex-col gap-2 max-h-60 overflow-y-auto mb-4">
+                  {docxItems.map((item, idx) => (
+                    <div
+                      key={idx}
+                      onClick={() => toggleDocxItem(idx)}
+                      className={`p-3 border rounded cursor-pointer transition-all flex justify-between items-center ${
+                        item.selecionado
+                          ? "border-primary-green bg-emerald-50 text-primary-green"
+                          : "border-border-gray bg-white text-text-gray"
+                      }`}
+                    >
+                      <div>
+                        <span className="text-[10px] font-bold uppercase">Encontrado</span>
+                        <h4 className="text-xs font-bold">{item.nome}</h4>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={item.selecionado}
+                        onChange={() => {}} // Handle by click div
+                        className="rounded accent-primary-green"
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-border-gray/50">
+                  <button
+                    onClick={() => setShowDocxParser(false)}
+                    className="border border-border-gray text-xs font-bold px-4 py-2 rounded"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleConfirmDocx}
+                    className="bg-accent-orange text-white text-xs font-bold px-4 py-2 rounded"
+                  >
+                    Confirmar e Integrar Selecionados
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* --- MODALS DE CADASTRO / EDIÇÃO MANUAL --- */}
+          {(showAddModal || showEditModal) && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto">
+              <form
+                onSubmit={showAddModal ? handleCreateLine : handleUpdateLine}
+                className="bg-white rounded-lg border-l-4 border-accent-orange max-w-2xl w-full p-6 shadow-xl my-8 relative"
+              >
+                <div className="border-b border-border-gray pb-3 mb-4">
+                  <h3 className="font-bold text-primary-green text-base">
+                    {showAddModal ? "Cadastrar Nova Linha de Crédito" : "Editar Linha de Crédito"}
+                  </h3>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs mb-5">
+                  <div className="md:col-span-2">
+                    <label className="font-bold block mb-1">Nome Oficial da Linha</label>
+                    <input
+                      type="text"
+                      required
+                      value={lineForm.nome}
+                      onChange={e => setLineForm({...lineForm, nome: e.target.value})}
+                      className="w-full border border-border-gray rounded px-2.5 py-1.5 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold block mb-1">Órgão / Instituição Repassadora</label>
+                    <input
+                      type="text"
+                      value={lineForm.orgao}
+                      onChange={e => setLineForm({...lineForm, orgao: e.target.value})}
+                      className="w-full border border-border-gray rounded px-2.5 py-1.5 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold block mb-1">Finalidade Principal</label>
+                    <select
+                      value={lineForm.finalidadePrincipal}
+                      onChange={e => setLineForm({...lineForm, finalidadePrincipal: e.target.value})}
+                      className="w-full border border-border-gray rounded px-2.5 py-1.5 bg-white focus:outline-none"
+                    >
+                      <option value="Custeio">Custeio</option>
+                      <option value="Investimento">Investimento</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="font-bold block mb-1">Tags de Finalidade (Separadas por vírgula)</label>
+                    <input
+                      type="text"
+                      value={lineForm.finalidades}
+                      onChange={e => setLineForm({...lineForm, finalidades: e.target.value})}
+                      placeholder="agricola, pecuaria, custeio..."
+                      className="w-full border border-border-gray rounded px-2.5 py-1.5 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold block mb-1">Enquadramento de Renda (Texto descritivo)</label>
+                    <input
+                      type="text"
+                      value={lineForm.enquadramento}
+                      onChange={e => setLineForm({...lineForm, enquadramento: e.target.value})}
+                      placeholder="Sem limite / R$ 500 mil"
+                      className="w-full border border-border-gray rounded px-2.5 py-1.5 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold block mb-1">Taxa de Juros Descrita</label>
+                    <input
+                      type="text"
+                      value={lineForm.taxaDescricao}
+                      onChange={e => setLineForm({...lineForm, taxaDescricao: e.target.value})}
+                      placeholder="3% a 5% a.a."
+                      className="w-full border border-border-gray rounded px-2.5 py-1.5 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold block mb-1">Taxa Mínima (%)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={lineForm.taxaMin}
+                      onChange={e => setLineForm({...lineForm, taxaMin: e.target.value})}
+                      className="w-full border border-border-gray rounded px-2.5 py-1.5 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold block mb-1">Taxa Máxima (%)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={lineForm.taxaMax}
+                      onChange={e => setLineForm({...lineForm, taxaMax: e.target.value})}
+                      className="w-full border border-border-gray rounded px-2.5 py-1.5 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold block mb-1">Prazo Máximo (Meses)</label>
+                    <input
+                      type="number"
+                      value={lineForm.prazo}
+                      onChange={e => setLineForm({...lineForm, prazo: e.target.value})}
+                      className="w-full border border-border-gray rounded px-2.5 py-1.5 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold block mb-1">Carência Máxima (Meses)</label>
+                    <input
+                      type="number"
+                      value={lineForm.carencia}
+                      onChange={e => setLineForm({...lineForm, carencia: e.target.value})}
+                      className="w-full border border-border-gray rounded px-2.5 py-1.5 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold block mb-1">Limite Mínimo Financiável (R$)</label>
+                    <input
+                      type="number"
+                      value={lineForm.limiteMin}
+                      onChange={e => setLineForm({...lineForm, limiteMin: e.target.value})}
+                      className="w-full border border-border-gray rounded px-2.5 py-1.5 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold block mb-1">Limite Máximo Financiável (R$)</label>
+                    <input
+                      type="number"
+                      value={lineForm.limiteMax}
+                      onChange={e => setLineForm({...lineForm, limiteMax: e.target.value})}
+                      className="w-full border border-border-gray rounded px-2.5 py-1.5 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="font-bold block mb-1">Culturas Especificadas e Limites de Cultura (Texto regra)</label>
+                    <input
+                      type="text"
+                      value={lineForm.culturas}
+                      onChange={e => setLineForm({...lineForm, culturas: e.target.value})}
+                      placeholder="SOJA, MILHO (ate 25 mil), TRIGO"
+                      className="w-full border border-border-gray rounded px-2.5 py-1.5 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="font-bold block mb-1">Itens Financiáveis (Máquinas, Insumos...)</label>
+                    <textarea
+                      rows="2"
+                      value={lineForm.itensFinanciaveis}
+                      onChange={e => setLineForm({...lineForm, itensFinanciaveis: e.target.value})}
+                      className="w-full border border-border-gray rounded px-2.5 py-1.5 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="font-bold block mb-1">Documentos Necessários (Um por linha)</label>
+                    <textarea
+                      rows="3"
+                      value={lineForm.documentos}
+                      onChange={e => setLineForm({...lineForm, documentos: e.target.value})}
+                      className="w-full border border-border-gray rounded px-2.5 py-1.5 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="font-bold block mb-1">Requisitos de Enquadramento do Cooperado</label>
+                    <textarea
+                      rows="2"
+                      value={lineForm.requisitos}
+                      onChange={e => setLineForm({...lineForm, requisitos: e.target.value})}
+                      className="w-full border border-border-gray rounded px-2.5 py-1.5 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-border-gray/50">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAddModal(false);
+                      setShowEditModal(false);
+                    }}
+                    className="border border-border-gray text-text-gray font-bold px-4 py-2 rounded"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="bg-accent-orange text-white font-bold px-5 py-2 rounded hover:bg-opacity-95"
+                  >
+                    Salvar Alterações
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* SPINNER OVERLAY DE CARREGAMENTO */}
+          {loading && (
+            <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/60 text-white">
+              <div className="w-12 h-12 border-4 border-t-accent-orange border-r-white/20 border-b-white/20 border-l-white/20 rounded-full animate-spin"></div>
+              <p className="mt-4 text-sm font-bold tracking-wide">{loadingText}</p>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    const container = document.getElementById('root');
+    const root = ReactDOM.createRoot(container);
+    root.render(<App />);
+  </script>
+</body>
+</html>
