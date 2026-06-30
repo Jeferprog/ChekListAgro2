@@ -1,97 +1,120 @@
 /**
  * SISTEMA DE CONSULTA DE CRÉDITO RURAL - CRESOL
- * 
- * Cole este código completo no arquivo "Código.gs" no seu projeto do Google Apps Script.
- * Este script gerencia as planilhas de Linhas de Crédito, Configurações, Base de Associados,
- * Crédito Tomado e Checklists de Documentação.
+ * Gerenciamento de Linhas de Crédito e Regras de Enquadramento
+ * Desenvolvido com Google Apps Script
  */
 
-// Inicialização automática das planilhas e cabeçalhos se não existirem
+// ==================== CONFIGURAÇÕES GLOBAIS ====================
+const SS = SpreadsheetApp.getActiveSpreadsheet();
+const SHEET_LINHAS = SS.getSheetByName("Linhas") || SS.insertSheet("Linhas");
+const SHEET_CONFIG = SS.getSheetByName("Configurações") || SS.insertSheet("Configurações");
+const SHEET_HISTORICO = SS.getSheetByName("Histórico") || SS.insertSheet("Histórico");
+const SHEET_BASE = SS.getSheetByName("Base") || SS.insertSheet("Base");
+const SHEET_BASE_CREDITO = SS.getSheetByName("BaseCredito") || SS.insertSheet("BaseCredito");
+const SHEET_CHECKLIST = SS.getSheetByName("ChecklistDocs") || SS.insertSheet("ChecklistDocs");
+
+// ==================== INICIALIZAÇÃO DO SISTEMA ====================
+
+function inicializarSistema() {
+  inicializarSheetLinhas();
+  inicializarSheetConfig();
+  inicializarSheetHistorico();
+  inicializarSheetBase();
+  inicializarSheetCredito();
+  inicializarSheetChecklist();
+  Logger.log("✓ Sistema inicializado com sucesso");
+}
+
+// Manter compatibilidade com código anterior
 function inicializarPlanilha() {
-  const SS = SpreadsheetApp.getActiveSpreadsheet();
-  
-  // 1. Aba Linhas de Crédito
-  let sheetLinhas = SS.getSheetByName("Linhas");
-  if (!sheetLinhas) {
-    sheetLinhas = SS.insertSheet("Linhas");
-    const cabecalhos = [
-      "ID", "Nome Linha", "Órgão/Instituição", "Finalidade Principal", "Finalidades (tags)",
-      "Enquadramento (Renda Min/Max)", "Taxa Mín (%)", "Taxa Máx (%)", "Taxa (descrição)",
-      "Prazo (meses)", "Carência (meses)", "Limite Min (R$)", "Limite Máx (R$)",
-      "Requisitos", "Documentos Necessários", "Status (Ativa/Inativa)", "Observações",
-      "Itens Financiáveis", "Culturas Financiadas"
+  inicializarSistema();
+
+function inicializarSheetLinhas() {
+  if (SHEET_LINHAS.getLastRow() === 0) {
+    const headers = [
+      "ID", "Nome Linha", "Órgão/Instituição", "Finalidade Principal",
+      "Finalidades (tags)", "Enquadramento (Renda Min/Max)", "Taxa Mín (%)",
+      "Taxa Máx (%)", "Prazo (meses)", "Carência (meses)", "Limite Min (R$)",
+      "Limite Máx (R$)", "Requisitos", "Documentos Necessários",
+      "Status (Ativa/Inativa)", "Data Atualização", "Observações",
+      "Itens Financiáveis", "Culturas Financiadas", "Taxa (descrição)"
     ];
-    sheetLinhas.appendRow(cabecalhos);
-    sheetLinhas.getRange(1, 1, 1, cabecalhos.length).setFontWeight("bold").setBackground("#005c46").setFontColor("#ffffff");
-    
-    // Inserir linha de exemplo
-    sheetLinhas.appendRow([
-      "L-001", 
-      "PRONAF CUSTEIO AGRÍCOLA - Faixa I", 
-      "BNDES / Cresol", 
-      "Custeio", 
-      "agricola,custeio,sustentabilidade", 
-      "Sem limite/R$ 500 mil", 
-      3.0, 
-      4.5, 
-      "3% a.a. até 4.5% a.a.", 
-      24, 
-      3, 
-      5000, 
-      250000, 
-      "Apresentação de DAP/CAF ativa", 
-      "(P) RG e CPF\n(P) DAP/CAF Ativa\n(F) Matrícula do Imóvel", 
-      "Ativa", 
-      "Custeio Geral de Culturas", 
-      "Aquisição de Sementes, Fertilizantes e Defensivos", 
-      "MILHO (até 25 mil), SOJA, TRIGO, FEIJÃO"
+
+    SHEET_LINHAS.appendRow(headers);
+    SHEET_LINHAS.getRange(1, 1, 1, headers.length).setFontWeight("bold").setBackground("#005c46");
+    SHEET_LINHAS.getRange(1, 1, 1, headers.length).setFontColor("white");
+
+    // Linha de exemplo
+    SHEET_LINHAS.appendRow([
+      "L001",
+      "PRONAF CUSTEIO AGRÍCOLA Faixa I",
+      "BNDES / Cresol",
+      "Custeio",
+      "agricola,custeio",
+      "Sem limite/R$ 500 mil",
+      "3",
+      "3",
+      "36",
+      "0",
+      "0",
+      "250000",
+      "Apresentação de DAP-Pronaf; Exploração de terra em diferentes condições",
+      "CAF/DAP-Pronaf, RG, CPF, projeto técnico, comprovante de renda",
+      "Ativa",
+      new Date(),
+      "Custeio | Sistemática: DIR/BNDES/POUPANÇA | IOF: 0,38%",
+      "Itens de custeio relacionados à atividade agrícola",
+      "MILHO (até 25 mil), SOJA, TRIGO, FEIJÃO",
+      "3% a.a."
     ]);
   }
+}
 
-  // 2. Aba de Configurações
-  let sheetConfig = SS.getSheetByName("Configurações");
-  if (!sheetConfig) {
-    sheetConfig = SS.insertSheet("Configurações");
-    sheetConfig.appendRow(["Parâmetro", "Valor"]);
-    sheetConfig.getRange(1, 1, 1, 2).setFontWeight("bold").setBackground("#f58220").setFontColor("#ffffff");
-    sheetConfig.appendRow(["Link Consulta Crédito (SICOR/CACR)", "https://www.bcb.gov.br/sicor/"]);
-    sheetConfig.appendRow(["Link Pasta Base de Associados", ""]);
-    sheetConfig.appendRow(["E-mails Administradores", "gestor@cresol.com.br, analista@cresol.com.br"]);
-    sheetConfig.appendRow(["Limite Custeio PRONAF", "250000"]);
-    sheetConfig.appendRow(["Limite Custeio PRONAMP", "1500000"]);
+function inicializarSheetConfig() {
+  if (SHEET_CONFIG.getLastRow() === 0) {
+    SHEET_CONFIG.appendRow(["Parâmetro", "Valor"]);
+    SHEET_CONFIG.getRange(1, 1, 1, 2).setFontWeight("bold").setBackground("#f58220").setFontColor("white");
+    SHEET_CONFIG.appendRow(["Link Consulta Crédito (SICOR/CACR)", "https://www.bcb.gov.br/sicor/"]);
+    SHEET_CONFIG.appendRow(["Link Pasta Base de Associados", ""]);
+    SHEET_CONFIG.appendRow(["E-mails Administradores", "gestor@cresol.com.br, analista@cresol.com.br"]);
+    SHEET_CONFIG.appendRow(["Limite Custeio PRONAF", "250000"]);
+    SHEET_CONFIG.appendRow(["Limite Custeio PRONAMP", "1500000"]);
   }
+}
 
-  // 3. Aba Base de Associados
-  let sheetBase = SS.getSheetByName("Base");
-  if (!sheetBase) {
-    sheetBase = SS.insertSheet("Base");
+function inicializarSheetHistorico() {
+  if (SHEET_HISTORICO.getLastRow() === 0) {
+    const headers = ["Data Hora", "Tipo Operação", "Finalidade", "Enquadramento", "Resultado", "Usuário"];
+    SHEET_HISTORICO.appendRow(headers);
+    SHEET_HISTORICO.getRange(1, 1, 1, headers.length).setFontWeight("bold").setBackground("#005c46").setFontColor("white");
+  }
+}
+
+function inicializarSheetBase() {
+  if (SHEET_BASE.getLastRow() === 0) {
     const cabecalhos = ["nr_cpf_cnpj", "nr_conta_corrente", "nm_nome", "ds_pessoa_tipo", "vl_anual_fonte_renda_total"];
-    sheetBase.appendRow(cabecalhos);
-    sheetBase.getRange(1, 1, 1, cabecalhos.length).setFontWeight("bold").setBackground("#005c46").setFontColor("#ffffff");
-    
-    // Inserir associado simulado
-    sheetBase.appendRow(["12345678909", "12345-6", "JEFERSON OLIVEIRA DA SILVA", "Física", 350000]);
-    sheetBase.appendRow(["98765432100", "54321-0", "MARIA SOUZA REIS", "Física", 1200000]);
-  }
+    SHEET_BASE.appendRow(cabecalhos);
+    SHEET_BASE.getRange(1, 1, 1, cabecalhos.length).setFontWeight("bold").setBackground("#005c46").setFontColor("white");
 
-  // 4. Aba de Crédito Tomado
-  let sheetCredito = SS.getSheetByName("BaseCredito");
-  if (!sheetCredito) {
-    sheetCredito = SS.insertSheet("BaseCredito");
+    SHEET_BASE.appendRow(["12345678909", "12345-6", "JEFERSON OLIVEIRA DA SILVA", "Física", 350000]);
+    SHEET_BASE.appendRow(["98765432100", "54321-0", "MARIA SOUZA REIS", "Física", 1200000]);
+  }
+}
+
+function inicializarSheetCredito() {
+  if (SHEET_BASE_CREDITO.getLastRow() === 0) {
     const cabecalhos = ["nr_cpf_cnpj", "ano_safra", "produto", "atividade", "if_fin", "valor_financiado", "aliquota_proagro", "valor_tomado"];
-    sheetCredito.appendRow(cabecalhos);
-    sheetCredito.getRange(1, 1, 1, cabecalhos.length).setFontWeight("bold").setBackground("#005c46").setFontColor("#ffffff");
-    
-    // Créditos simulados tomados
-    sheetCredito.appendRow(["12345678909", "2025/2026", "PRONAF CUSTEIO AGRÍCOLA", "Milho", "Cresol", 45000, 3, 46350]);
-  }
+    SHEET_BASE_CREDITO.appendRow(cabecalhos);
+    SHEET_BASE_CREDITO.getRange(1, 1, 1, cabecalhos.length).setFontWeight("bold").setBackground("#005c46").setFontColor("white");
 
-  // 5. Aba de Checklist de Documentos Customizados
-  let sheetChecklist = SS.getSheetByName("ChecklistDocs");
-  if (!sheetChecklist) {
-    sheetChecklist = SS.insertSheet("ChecklistDocs");
-    sheetChecklist.appendRow(["Nome Linha", "Documentos"]);
-    sheetChecklist.getRange(1, 1, 1, 2).setFontWeight("bold").setBackground("#005c46").setFontColor("#ffffff");
+    SHEET_BASE_CREDITO.appendRow(["12345678909", "2025/2026", "PRONAF CUSTEIO AGRÍCOLA", "Milho", "Cresol", 45000, 3, 46350]);
+  }
+}
+
+function inicializarSheetChecklist() {
+  if (SHEET_CHECKLIST.getLastRow() === 0) {
+    SHEET_CHECKLIST.appendRow(["Nome Linha", "Documentos"]);
+    SHEET_CHECKLIST.getRange(1, 1, 1, 2).setFontWeight("bold").setBackground("#005c46").setFontColor("white");
   }
 }
 
@@ -104,7 +127,31 @@ function doGet() {
     .addMetaTag("viewport", "width=device-width, initial-scale=1");
 }
 
-// CONFIGURATIONS READERS & WRITERS
+// ==================== CONFIGURAÇÕES (LEITURA & ESCRITA) ====================
+
+function obterValorConfig(parametro) {
+  if (!SHEET_CONFIG) return "";
+  const dados = SHEET_CONFIG.getDataRange().getValues();
+  for (let i = 1; i < dados.length; i++) {
+    if (dados[i][0] === parametro) {
+      return String(dados[i][1]);
+    }
+  }
+  return "";
+}
+
+function salvarValorConfig(parametro, valor) {
+  if (!SHEET_CONFIG) return;
+  const dados = SHEET_CONFIG.getDataRange().getValues();
+  for (let i = 1; i < dados.length; i++) {
+    if (dados[i][0] === parametro) {
+      SHEET_CONFIG.getRange(i + 1, 2).setValue(valor);
+      return;
+    }
+  }
+  SHEET_CONFIG.appendRow([parametro, valor]);
+}
+
 function obterLinkConsulta() {
   return obterValorConfig("Link Consulta Crédito (SICOR/CACR)") || "https://www.bcb.gov.br/sicor/";
 }
@@ -122,19 +169,6 @@ function obterLimitesEnquadramento() {
   const pronaf = parseFloat(obterValorConfig("Limite Custeio PRONAF") || "250000");
   const pronamp = parseFloat(obterValorConfig("Limite Custeio PRONAMP") || "1500000");
   return { pronaf, pronamp };
-}
-
-function obterValorConfig(parametro) {
-  const SS = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = SS.getSheetByName("Configurações");
-  if (!sheet) return "";
-  const dados = sheet.getDataRange().getValues();
-  for (let i = 1; i < dados.length; i++) {
-    if (dados[i][0] === parametro) {
-      return String(dados[i][1]);
-    }
-  }
-  return "";
 }
 
 function salvarLinkConsulta(valor) {
@@ -158,46 +192,30 @@ function salvarLimitesEnquadramento(pronaf, pronamp) {
   return { success: true };
 }
 
-function salvarValorConfig(parametro, valor) {
-  const SS = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = SS.getSheetByName("Configurações");
-  if (!sheet) return;
-  const dados = sheet.getDataRange().getValues();
-  for (let i = 1; i < dados.length; i++) {
-    if (dados[i][0] === parametro) {
-      sheet.getRange(i + 1, 2).setValue(valor);
-      return;
-    }
-  }
-  sheet.appendRow([parametro, valor]);
-}
+// ==================== LINHAS DE CRÉDITO ====================
 
-// CREDIT LINES ENDPOINTS
 function listarTodasAsLinhas() {
-  const SS = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = SS.getSheetByName("Linhas");
-  if (!sheet) return [];
-  const dados = sheet.getDataRange().getValues();
+  if (!SHEET_LINHAS) return [];
+  const dados = SHEET_LINHAS.getDataRange().getValues();
   if (dados.length <= 1) return [];
-  
-  // Carrega checklists customizados para marcar a propriedade temChecklist
-  const sheetChecklist = SS.getSheetByName("ChecklistDocs");
+
+  // Carrega checklists customizados
   const checklistLines = [];
-  if (sheetChecklist) {
-    const ckDados = sheetChecklist.getDataRange().getValues();
+  if (SHEET_CHECKLIST) {
+    const ckDados = SHEET_CHECKLIST.getDataRange().getValues();
     for (var r = 1; r < ckDados.length; r++) {
       if (String(ckDados[r][1]).trim() !== "") {
         checklistLines.push(String(ckDados[r][0]));
       }
     }
   }
-  
+
   const H = dados[0];
   return dados.slice(1).map(function(linha) {
     const nome = String(linha[H.indexOf("Nome Linha")]);
     const documentos = String(linha[H.indexOf("Documentos Necessários")]);
     const temChecklist = checklistLines.indexOf(nome) !== -1 || documentos.trim() !== "";
-    
+
     return {
       id: String(linha[H.indexOf("ID")]),
       nome: nome,
@@ -224,19 +242,17 @@ function listarTodasAsLinhas() {
 }
 
 function adicionarLinha(linha) {
-  const SS = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = SS.getSheetByName("Linhas");
-  if (!sheet) return { success: false, erro: "Aba Linhas não encontrada." };
-  
-  const dados = sheet.getDataRange().getValues();
+  if (!SHEET_LINHAS) return { success: false, erro: "Aba Linhas não encontrada." };
+
+  const dados = SHEET_LINHAS.getDataRange().getValues();
   let maxIdNum = 0;
   for (let i = 1; i < dados.length; i++) {
     const currentId = String(dados[i][0]);
     const num = parseInt(currentId.replace(/\D/g, ""));
     if (!isNaN(num) && num > maxIdNum) maxIdNum = num;
   }
-  const nextId = "L-" + String(maxIdNum + 1).padStart(3, "0");
-  
+  const nextId = "L" + String(maxIdNum + 1).padStart(3, "0");
+
   const H = dados[0];
   const novaLinha = new Array(H.length);
   novaLinha[H.indexOf("ID")] = nextId;
@@ -255,30 +271,31 @@ function adicionarLinha(linha) {
   novaLinha[H.indexOf("Requisitos")] = linha.requisitos || "";
   novaLinha[H.indexOf("Documentos Necessários")] = linha.documentos || "";
   novaLinha[H.indexOf("Status (Ativa/Inativa)")] = linha.status || "Ativa";
+  novaLinha[H.indexOf("Data Atualização")] = new Date();
   novaLinha[H.indexOf("Observações")] = linha.observacoes || "";
   novaLinha[H.indexOf("Itens Financiáveis")] = linha.itensFinanciaveis || "";
   novaLinha[H.indexOf("Culturas Financiadas")] = linha.culturas || "";
-  
-  sheet.appendRow(novaLinha);
+
+  SHEET_LINHAS.appendRow(novaLinha);
   return { success: true, id: nextId };
 }
 
-function atualizarLinha(id, ptData) {
-  const SS = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = SS.getSheetByName("Linhas");
-  if (!sheet) return { success: false, erro: "Aba Linhas não encontrada." };
-  
-  const dados = sheet.getDataRange().getValues();
-  const H = dados[0];
-  for (let r = 1; r < dados.length; r++) {
-    if (String(dados[r][0]) === String(id)) {
-      const keys = Object.keys(ptData);
-      keys.forEach(key => {
-        const colIdx = H.indexOf(key);
+function atualizarLinha(idLinha, novosDados) {
+  if (!SHEET_LINHAS) return { success: false, error: "Aba Linhas não encontrada." };
+
+  const dados = SHEET_LINHAS.getDataRange().getValues();
+  const headers = dados[0];
+  const idIdx = headers.indexOf("ID");
+
+  for (let i = 1; i < dados.length; i++) {
+    if (dados[i][idIdx] === idLinha) {
+      for (const [chave, valor] of Object.entries(novosDados)) {
+        const colIdx = headers.indexOf(chave);
         if (colIdx !== -1) {
-          sheet.getRange(r + 1, colIdx + 1).setValue(ptData[key]);
+          SHEET_LINHAS.getRange(i + 1, colIdx + 1).setValue(valor);
         }
-      });
+      }
+      SHEET_LINHAS.getRange(i + 1, headers.indexOf("Data Atualização") + 1).setValue(new Date());
       return { success: true };
     }
   }
@@ -286,37 +303,34 @@ function atualizarLinha(id, ptData) {
 }
 
 function ativarDesativarLinha(id, active) {
-  const SS = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = SS.getSheetByName("Linhas");
-  if (!sheet) return { success: false };
-  const dados = sheet.getDataRange().getValues();
+  if (!SHEET_LINHAS) return { success: false };
+  const dados = SHEET_LINHAS.getDataRange().getValues();
   const colIdx = dados[0].indexOf("Status (Ativa/Inativa)");
   for (let r = 1; r < dados.length; r++) {
     if (String(dados[r][0]) === String(id)) {
-      sheet.getRange(r + 1, colIdx + 1).setValue(active ? "Ativa" : "Inativa");
+      SHEET_LINHAS.getRange(r + 1, colIdx + 1).setValue(active ? "Ativa" : "Inativa");
       return { success: true };
     }
   }
   return { success: false };
 }
 
-// ASSOCIADOS & CRÉDITO TOMADO
+// ==================== ASSOCIADOS & CRÉDITO TOMADO ====================
+
 function buscarAssociado(termo) {
-  const SS = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = SS.getSheetByName("Base");
-  if (!sheet) return { sucesso: false, error: "Aba Base não encontrada." };
-  
+  if (!SHEET_BASE) return { sucesso: false, error: "Aba Base não encontrada." };
+
   const termoAlvo = String(termo).replace(/\D/g, "").replace(/^0+/, "");
   if (!termoAlvo) return { sucesso: false, error: "Termo de busca inválido." };
-  
-  const dados = sheet.getDataRange().getValues();
+
+  const dados = SHEET_BASE.getDataRange().getValues();
   if (dados.length < 2) return { sucesso: false, error: "Base de associados vazia." };
-  
+
   const H = dados[0];
   for (let r = 1; r < dados.length; r++) {
     const cpf = String(dados[r][H.indexOf("nr_cpf_cnpj")]).replace(/\D/g, "").replace(/^0+/, "");
     const conta = String(dados[r][H.indexOf("nr_conta_corrente")]).replace(/\D/g, "").replace(/^0+/, "");
-    
+
     if (cpf === termoAlvo || conta === termoAlvo) {
       const rendaAnual = parseFloat(dados[r][H.indexOf("vl_anual_fonte_renda_total")]) || 0;
       return {
@@ -334,27 +348,25 @@ function buscarAssociado(termo) {
 }
 
 function buscarCreditoTomado(cpf) {
-  const SS = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = SS.getSheetByName("BaseCredito");
-  if (!sheet) return { sucesso: false, items: [], totalFinanciado: 0 };
-  
+  if (!SHEET_BASE_CREDITO) return { sucesso: false, items: [], totalFinanciado: 0 };
+
   const cpfAlvo = String(cpf).replace(/\D/g, "").replace(/^0+/, "");
   if (!cpfAlvo) return { sucesso: false, items: [], totalFinanciado: 0 };
-  
-  const dados = sheet.getDataRange().getValues();
+
+  const dados = SHEET_BASE_CREDITO.getDataRange().getValues();
   if (dados.length < 2) return { sucesso: true, items: [], totalFinanciado: 0 };
-  
+
   const H = dados[0];
   const items = [];
   let totalFinanciado = 0;
-  
+
   for (let r = 1; r < dados.length; r++) {
     const rowCpf = String(dados[r][H.indexOf("nr_cpf_cnpj")]).replace(/\D/g, "").replace(/^0+/, "");
     if (rowCpf === cpfAlvo) {
       const valorFin = parseFloat(dados[r][H.indexOf("valor_financiado")]) || 0;
       const valorTom = parseFloat(dados[r][H.indexOf("valor_tomado")]) || valorFin;
       totalFinanciado += valorTom;
-      
+
       items.push({
         anoSafra: String(dados[r][H.indexOf("ano_safra")]),
         produto: String(dados[r][H.indexOf("produto")]),
@@ -366,22 +378,21 @@ function buscarCreditoTomado(cpf) {
       });
     }
   }
-  
+
   return { sucesso: true, items: items, totalFinanciado: totalFinanciado };
 }
 
-// CHECKLISTS DOCS
+// ==================== CHECKLISTS DOCUMENTAÇÃO ====================
+
 function obterChecklistDocs(nomeLinha) {
-  const SS = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = SS.getSheetByName("ChecklistDocs");
-  if (!sheet) return [];
-  const dados = sheet.getDataRange().getValues();
+  if (!SHEET_CHECKLIST) return [];
+  const dados = SHEET_CHECKLIST.getDataRange().getValues();
   for (let r = 1; r < dados.length; r++) {
     if (String(dados[r][0]) === String(nomeLinha)) {
       return String(dados[r][1]).split("\n").map(d => d.trim()).filter(Boolean);
     }
   }
-  
+
   // Fallback para documentos padrão cadastrados na linha
   const linhas = listarTodasAsLinhas();
   const linhaMatch = linhas.find(l => l.nome === nomeLinha);
@@ -391,18 +402,16 @@ function obterChecklistDocs(nomeLinha) {
   return [];
 }
 
-function _salvarChecklist(nomeLinha, documentosTexto) {
-  const SS = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = SS.getSheetByName("ChecklistDocs");
-  if (!sheet) return { success: false };
-  const dados = sheet.getDataRange().getValues();
+function salvarChecklist(nomeLinha, documentosTexto) {
+  if (!SHEET_CHECKLIST) return { success: false };
+  const dados = SHEET_CHECKLIST.getDataRange().getValues();
   for (let r = 1; r < dados.length; r++) {
     if (String(dados[r][0]) === String(nomeLinha)) {
-      sheet.getRange(r + 1, 2).setValue(documentosTexto);
+      SHEET_CHECKLIST.getRange(r + 1, 2).setValue(documentosTexto);
       return { success: true };
     }
   }
-  sheet.appendRow([nomeLinha, documentosTexto]);
+  SHEET_CHECKLIST.appendRow([nomeLinha, documentosTexto]);
   return { success: true };
 }
 
@@ -560,21 +569,21 @@ function processarECarregarCSVBase(sheet, csvContent) {
   return recordsAdded;
 }
 
+// ==================== IMPORTAÇÃO DE DADOS ====================
+
 function atualizarBaseAssociados() {
-  const SS = SpreadsheetApp.getActiveSpreadsheet();
-  const sheetBase = SS.getSheetByName("Base");
-  if (!sheetBase) return { success: false, error: "Aba Base não encontrada." };
-  
+  if (!SHEET_BASE) return { success: false, error: "Aba Base não encontrada." };
+
   const linkBase = obterValorConfig("Link Pasta Base de Associados");
   if (!linkBase) {
     return { success: false, error: "Link da Pasta Base de Associados não configurado nas Configurações." };
   }
-  
+
   const driveInfo = obterIdDoDrive(linkBase);
   if (!driveInfo) {
     return { success: false, error: "Link de pasta inválido. Por favor, insira um link válido do Google Drive." };
   }
-  
+
   try {
     var file;
     if (driveInfo.type === "file") {
@@ -591,45 +600,43 @@ function atualizarBaseAssociados() {
         }
       }
     }
-    
+
     if (!file) {
       return { success: false, error: "Nenhum arquivo 'basedepessoas.csv' ou arquivo .csv correspondente encontrado na pasta do Drive." };
     }
-    
+
     var contentText = file.getBlob().getDataAsString("UTF-8");
     if (contentText.indexOf("") !== -1 || contentText.indexOf("") !== -1) {
       contentText = file.getBlob().getDataAsString("ISO-8859-1");
     }
-    
-    var numLines = processarECarregarCSVBase(sheetBase, contentText);
+
+    var numLines = processarECarregarCSVBase(SHEET_BASE, contentText);
     return { success: true, registros: numLines };
-    
+
   } catch (err) {
     return { success: false, error: "Erro ao acessar arquivos do Google Drive: " + err.message };
   }
 }
 
 function processarArquivoCredito(filename, contentText) {
-  const SS = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = SS.getSheetByName("BaseCredito");
-  if (!sheet) return { success: false, error: "Aba BaseCredito não encontrada." };
-  
+  if (!SHEET_BASE_CREDITO) return { success: false, error: "Aba BaseCredito não encontrada." };
+
   const headers = ["nr_cpf_cnpj", "ano_safra", "produto", "atividade", "if_fin", "valor_financiado", "aliquota_proagro", "valor_tomado"];
-  sheet.clearContents();
-  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-  
+  SHEET_BASE_CREDITO.clearContents();
+  SHEET_BASE_CREDITO.getRange(1, 1, 1, headers.length).setValues([headers]);
+
   var delimiter = ",";
   if (contentText.indexOf(";") !== -1) {
     delimiter = ";";
   }
-  
+
   var parsedData = Utilities.parseCsv(contentText, delimiter);
   if (parsedData.length <= 1) {
     return { success: true, registros: 0 };
   }
-  
+
   var csvHeaders = parsedData[0].map(function(h) { return h.trim().toLowerCase(); });
-  
+
   const cpfIdx = csvHeaders.indexOf("nr_cpf_cnpj") !== -1 ? csvHeaders.indexOf("nr_cpf_cnpj") : csvHeaders.indexOf("cpf");
   const safraIdx = csvHeaders.indexOf("ano_safra") !== -1 ? csvHeaders.indexOf("ano_safra") : csvHeaders.indexOf("safra");
   const produtoIdx = csvHeaders.indexOf("produto") !== -1 ? csvHeaders.indexOf("produto") : csvHeaders.indexOf("linha");
@@ -638,52 +645,50 @@ function processarArquivoCredito(filename, contentText) {
   const valorFinIdx = csvHeaders.indexOf("valor_financiado") !== -1 ? csvHeaders.indexOf("valor_financiado") : csvHeaders.indexOf("valor");
   const proagroIdx = csvHeaders.indexOf("aliquota_proagro") !== -1 ? csvHeaders.indexOf("aliquota_proagro") : csvHeaders.indexOf("proagro");
   const valorTomIdx = csvHeaders.indexOf("valor_tomado") !== -1 ? csvHeaders.indexOf("valor_tomado") : csvHeaders.indexOf("tomado");
-  
+
   var count = 0;
   var rowsToAppend = [];
-  
+
   for (var i = 1; i < parsedData.length; i++) {
     var row = parsedData[i];
     if (row.length < 2) continue;
-    
+
     var cpf = cpfIdx !== -1 ? String(row[cpfIdx]).trim() : "";
     var safra = safraIdx !== -1 ? String(row[safraIdx]).trim() : "2025/2026";
     var produto = produtoIdx !== -1 ? String(row[produtoIdx]).trim().toUpperCase() : "CRÉDITO RURAL";
     var atividade = atividadeIdx !== -1 ? String(row[atividadeIdx]).trim() : "Outros";
     var ifFin = ifIdx !== -1 ? String(row[ifIdx]).trim() : "Cresol";
-    
+
     var valFinText = valorFinIdx !== -1 ? String(row[valorFinIdx]).trim() : "0";
     valFinText = valFinText.replace(/[R$\s]/g, "").replace(/\./g, "").replace(",", ".");
     var valFin = parseFloat(valFinText) || 0;
-    
+
     var aliquotaText = proagroIdx !== -1 ? String(row[proagroIdx]).trim() : "0";
     aliquotaText = aliquotaText.replace(/[%\s]/g, "").replace(",", ".");
     var aliquota = parseFloat(aliquotaText) || 0;
-    
+
     var valTomText = valorTomIdx !== -1 ? String(row[valorTomIdx]).trim() : String(valFin);
     valTomText = valTomText.replace(/[R$\s]/g, "").replace(/\./g, "").replace(",", ".");
     var valTom = parseFloat(valTomText) || valFin;
-    
+
     if (cpf) {
       rowsToAppend.push([cpf, safra, produto, atividade, ifFin, valFin, aliquota, valTom]);
       count++;
     }
   }
-  
+
   if (rowsToAppend.length > 0) {
-    sheet.getRange(2, 1, rowsToAppend.length, headers.length).setValues(rowsToAppend);
+    SHEET_BASE_CREDITO.getRange(2, 1, rowsToAppend.length, headers.length).setValues(rowsToAppend);
   }
-  
+
   return { success: true, registros: count };
 }
 
 function processarArquivoAssociados(filename, contentText) {
-  const SS = SpreadsheetApp.getActiveSpreadsheet();
-  const sheetBase = SS.getSheetByName("Base");
-  if (!sheetBase) return { success: false, error: "Aba Base não encontrada." };
-  
+  if (!SHEET_BASE) return { success: false, error: "Aba Base não encontrada." };
+
   try {
-    var numLines = processarECarregarCSVBase(sheetBase, contentText);
+    var numLines = processarECarregarCSVBase(SHEET_BASE, contentText);
     return { success: true, registros: numLines };
   } catch (err) {
     return { success: false, error: "Erro ao processar arquivo de associados: " + err.message };
