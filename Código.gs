@@ -759,6 +759,11 @@ function salvarChecklist(nomeLinha, documentosTexto) {
   return { success: true };
 }
 
+// Alias mantido para compatibilidade com o frontend (chama _salvarChecklist).
+function _salvarChecklist(nomeLinha, documentosTexto) {
+  return salvarChecklist(nomeLinha, documentosTexto);
+}
+
 // ==================== PROCESSAMENTO DE ARQUIVOS ====================
 
 function processarArquivoCresol(arquivoInfo) {
@@ -873,6 +878,22 @@ function obterIdDoDrive(link) {
 // ==================== IMPORTAÇÃO DE DADOS ====================
 
 /**
+ * Respostas padronizadas com chaves em PT e EN, porque o frontend (React)
+ * lê `success`/`error` em alguns handlers e `sucesso`/`erro` em outros.
+ * Assim qualquer handler funciona independentemente da chave que consultar.
+ */
+function _ok(extra) {
+  const o = { success: true, sucesso: true };
+  if (extra) { for (const k in extra) o[k] = extra[k]; }
+  return o;
+}
+
+function _fail(msg) {
+  const m = String(msg || "Erro desconhecido");
+  return { success: false, sucesso: false, error: m, erro: m };
+}
+
+/**
  * Converte um valor monetário em formato brasileiro para número.
  * Ex.: "R$ 1.234,56" -> 1234.56 ; "1500" -> 1500.
  */
@@ -930,13 +951,13 @@ function _lerCsvDoLink(link, filename) {
  */
 function _gravarCsvNaBase(conteudo) {
   if (!conteudo || conteudo.trim() === "") {
-    return { sucesso: false, erro: "CSV vazio ou inválido." };
+    return _fail("CSV vazio ou inválido.");
   }
 
   const primeiraLinha = conteudo.split("\n")[0] || "";
   const delim = (primeiraLinha.split(";").length > primeiraLinha.split(",").length) ? ";" : ",";
   const dados = Utilities.parseCsv(conteudo, delim);
-  if (!dados || dados.length < 2) return { sucesso: false, erro: "CSV vazio ou inválido." };
+  if (!dados || dados.length < 2) return _fail("CSV vazio ou inválido.");
 
   // Normaliza a largura das linhas (todas com o mesmo nº de colunas do cabeçalho)
   const largura = dados[0].length;
@@ -950,7 +971,7 @@ function _gravarCsvNaBase(conteudo) {
   SHEET_BASE.getRange(1, 1, norm.length, largura).setValues(norm);
   SHEET_BASE.getRange(1, 1, 1, largura).setFontWeight("bold").setBackground("#005c46").setFontColor("white");
 
-  return { sucesso: true, registros: norm.length - 1, atualizado: new Date().toLocaleString("pt-BR") };
+  return _ok({ registros: norm.length - 1, atualizado: new Date().toLocaleString("pt-BR") });
 }
 
 /**
@@ -959,28 +980,35 @@ function _gravarCsvNaBase(conteudo) {
  */
 function atualizarBaseAssociados() {
   try {
-    if (!SHEET_BASE) return { sucesso: false, erro: "Aba Base não encontrada." };
+    if (!SHEET_BASE) return _fail("Aba Base não encontrada.");
 
     const link = obterLinkBase();
-    if (!link) return { sucesso: false, erro: "Configure o link da pasta/arquivo da base na aba Administrativo." };
+    if (!link) return _fail("Configure o link da pasta/arquivo da base na aba Administrativo.");
 
     const conteudo = _lerCsvDoLink(link, "basedepessoas.csv");
-    if (!conteudo) return { sucesso: false, erro: "Arquivo basedepessoas.csv não encontrado no link informado." };
+    if (!conteudo) return _fail("Arquivo basedepessoas.csv não encontrado no link informado.");
 
     return _gravarCsvNaBase(conteudo);
   } catch (e) {
     Logger.log("Erro em atualizarBaseAssociados: " + e.toString());
-    return { sucesso: false, erro: e.toString() };
+    return _fail(e.toString());
   }
 }
 
-function processarArquivoCreditoBase(arquivoInfo) {
-  if (!SHEET_BASE_CREDITO) return { sucesso: false, error: "Aba BaseCredito não encontrada." };
+/**
+ * Importa a base de crédito tomado a partir do texto de um CSV.
+ * Assinatura compatível com o frontend: (filename, contentText).
+ */
+function processarArquivoCredito(filename, contentText) {
+  if (!SHEET_BASE_CREDITO) return _fail("Aba BaseCredito não encontrada.");
 
   try {
-    const contentText = arquivoInfo.conteudo || arquivoInfo;
+    // Aceita tanto (filename, contentText) quanto um objeto { conteudo }
+    if (contentText === undefined && filename && typeof filename === "object") {
+      contentText = filename.conteudo || filename.content || "";
+    }
     if (!contentText) {
-      return { sucesso: false, erro: "Arquivo vazio" };
+      return _fail("Arquivo vazio ou não foi possível ler o conteúdo.");
     }
 
     const headers = ["nr_cpf_cnpj", "ano_safra", "produto", "atividade", "if_fin", "valor_financiado", "aliquota_proagro", "valor_tomado"];
@@ -1004,7 +1032,7 @@ function processarArquivoCreditoBase(arquivoInfo) {
     }
 
     if (!parsedData || parsedData.length <= 1) {
-      return { sucesso: true, registros: 0, atualizado: new Date().toLocaleString('pt-BR') };
+      return _ok({ registros: 0, atualizado: new Date().toLocaleString('pt-BR') });
     }
 
     var csvHeaders = parsedData[0].map(function(h) { return String(h || "").trim().toLowerCase(); });
@@ -1053,19 +1081,25 @@ function processarArquivoCreditoBase(arquivoInfo) {
       SHEET_BASE_CREDITO.getRange(2, 1, rowsToAppend.length, headers.length).setValues(rowsToAppend);
     }
 
-    return { sucesso: true, registros: count, atualizado: new Date().toLocaleString('pt-BR') };
+    return _ok({ registros: count, atualizado: new Date().toLocaleString('pt-BR') });
   } catch (err) {
     Logger.log("Erro ao processar arquivo de crédito: " + err);
-    return { sucesso: false, erro: "Erro ao processar arquivo: " + err.toString() };
+    return _fail("Erro ao processar arquivo: " + err.toString());
   }
 }
 
+// Alias mantido para compatibilidade (usado pelo doPost e versões anteriores).
+function processarArquivoCreditoBase(arquivoInfo) {
+  const conteudo = (arquivoInfo && (arquivoInfo.conteudo || arquivoInfo.content)) || arquivoInfo;
+  return processarArquivoCredito((arquivoInfo && arquivoInfo.nome) || "credito.csv", conteudo);
+}
+
 function processarArquivoAssociados(filename, contentText) {
-  if (!SHEET_BASE) return { sucesso: false, erro: "Aba Base não encontrada." };
+  if (!SHEET_BASE) return _fail("Aba Base não encontrada.");
 
   try {
     return _gravarCsvNaBase(contentText);
   } catch (err) {
-    return { sucesso: false, erro: "Erro ao processar arquivo de associados: " + err.toString() };
+    return _fail("Erro ao processar arquivo de associados: " + err.toString());
   }
 }
