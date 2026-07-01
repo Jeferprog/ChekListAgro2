@@ -146,7 +146,8 @@
             else if (methodName === "buscarCreditoTomado") resolve({
               sucesso: true, items: [{ anoSafra: "2025/2026", produto: "PRONAF CUSTEIO AGRÍCOLA", atividade: "Milho", ifFin: "Cresol", valorFinanciado: 45000, aliquotaProagro: 3, valorTomado: 46350 }], totalFinanciado: 46350
             });
-            else if (methodName === "obterChecklistDocs") resolve(["RG e CPF", "DAP/CAF Ativa", "Matrícula da Terra"]);
+            else if (methodName === "obterChecklistDocs") resolve(["(P) Extrato DAP", "(P) CAR Recibo", "(F) CETCR", "(F) CCB"]);
+            else if (methodName === "importarChecklists") resolve({ sucesso: true, success: true, linhasAtualizadas: 4, blocos: 1, relatorio: [] });
             else resolve({ success: true });
           }, 600);
         }
@@ -619,6 +620,13 @@
         }
       };
 
+      // Separa o prefixo (P)/(F) do texto do documento
+      const parseChecklistItem = (raw) => {
+        const m = String(raw || "").trim().match(/^\(\s*([pfPF])\s*\)\s*(.*)$/);
+        if (m) return { text: m[2].trim(), etapa: m[1].toUpperCase(), checked: false };
+        return { text: String(raw || "").trim(), etapa: "", checked: false };
+      };
+
       // VER CHECKLIST DE DOCUMENTOS CUSTOMIZADO
       const handleOpenChecklist = async (nomeLinha) => {
         setChecklistLineName(nomeLinha);
@@ -626,7 +634,7 @@
         setLoadingText("Carregando checklist...");
         try {
           const docs = await runGas("obterChecklistDocs", nomeLinha);
-          setChecklistItems(docs.map(text => ({ text, checked: false })));
+          setChecklistItems(docs.map(parseChecklistItem));
           setShowChecklistModal(true);
         } catch (e) {
           console.error(e);
@@ -642,12 +650,14 @@
         setChecklistItems(next);
       };
 
-      // SALVAR CUSTOM CHECKLIST
+      // SALVAR CUSTOM CHECKLIST (reconstrói o prefixo (P)/(F))
       const handleSaveChecklistCustom = async () => {
         setLoading(true);
         setLoadingText("Salvando checklist...");
         try {
-          const text = checklistItems.map(i => i.text).join("\n");
+          const text = checklistItems
+            .map(i => (i.etapa ? "(" + i.etapa + ") " : "") + i.text)
+            .join("\n");
           await runGas("_salvarChecklist", checklistLineName, text);
           alert("Checklist atualizado com sucesso!");
         } catch (e) {
@@ -656,6 +666,53 @@
         } finally {
           setLoading(false);
         }
+      };
+
+      // IMPORTAR CHECKLISTS (.docx ou .txt) — divide em etapas (P)/(F) por linha
+      const handleImportChecklist = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const nome = file.name.toLowerCase();
+        const ehDocx = nome.endsWith(".docx");
+        setLoading(true);
+        setLoadingText("Importando checklists...");
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          try {
+            let conteudo;
+            if (ehDocx) {
+              conteudo = String(event.target.result || "").split(",")[1] || "";
+            } else {
+              conteudo = String(event.target.result || "");
+            }
+            const res = await runGas("importarChecklists", conteudo, file.name);
+            if (res && (res.sucesso || res.success)) {
+              const naoEnc = (res.relatorio || []).filter(r => r.naoEncontrado);
+              let msg = `✓ Checklists importados! ${res.linhasAtualizadas} linha(s) atualizada(s) em ${res.blocos} bloco(s).`;
+              if (naoEnc.length) {
+                msg += `\n\n⚠️ ${naoEnc.length} título(s) sem linha correspondente:\n` +
+                  naoEnc.map(r => "• " + r.header).join("\n");
+              }
+              alert(msg);
+              await carregarLinhas();
+            } else {
+              alert("✕ " + ((res && (res.erro || res.error)) || "Falha ao importar."));
+            }
+          } catch (err) {
+            console.error(err);
+            alert("✕ Erro ao importar: " + (err && err.message ? err.message : err));
+          } finally {
+            setLoading(false);
+            e.target.value = "";
+          }
+        };
+        reader.onerror = () => {
+          setLoading(false);
+          alert("✕ Não foi possível ler o arquivo.");
+          e.target.value = "";
+        };
+        if (ehDocx) reader.readAsDataURL(file);
+        else reader.readAsText(file);
       };
 
       // SINCRONIZAR BASE ASSOCIADOS (CSV DRIVE)
@@ -1258,6 +1315,21 @@
                       <IconUpload />
                       <span>Importar via DOCX Cresol</span>
                     </button>
+                    <input
+                      type="file"
+                      id="checklistInputGas"
+                      accept=".docx,.txt,.csv"
+                      onChange={handleImportChecklist}
+                      className="hidden"
+                    />
+                    <button
+                      onClick={() => document.getElementById("checklistInputGas")?.click()}
+                      className="bg-[#0d6efd] text-white text-xs font-bold px-4 py-2.5 rounded hover:bg-opacity-95 transition-all flex items-center gap-1.5 shadow-sm"
+                      title="Importar checklists (.docx ou .txt) com itens (P) pré-contratação e (F) formalização"
+                    >
+                      <IconCheck />
+                      <span>Importar Checklist</span>
+                    </button>
                     <button
                       onClick={openAddModal}
                       className="bg-accent-orange text-white text-xs font-bold px-4 py-2.5 rounded hover:bg-opacity-95 transition-all flex items-center gap-1.5 shadow-sm"
@@ -1491,20 +1563,43 @@
                   <button onClick={() => setShowChecklistModal(false)} className="text-text-gray hover:text-text-dark font-bold text-xl">&times;</button>
                 </div>
 
-                <div className="flex flex-col gap-2 max-h-60 overflow-y-auto mb-4 p-1">
-                  {checklistItems.map((item, i) => (
-                    <label key={i} className="flex items-start gap-2.5 py-1.5 px-2 bg-slate-50 border border-border-gray/30 rounded cursor-pointer hover:bg-slate-100/70 transition-colors">
-                      <input
-                        type="checkbox"
-                        checked={item.checked}
-                        onChange={() => toggleChecklistItem(i)}
-                        className="rounded accent-primary-green mt-1 cursor-pointer"
-                      />
-                      <span className={`text-xs ${item.checked ? "line-through text-text-gray" : "text-text-dark font-medium"}`}>
-                        {item.text}
-                      </span>
-                    </label>
-                  ))}
+                <div className="flex flex-col gap-4 max-h-80 overflow-y-auto mb-4 p-1">
+                  {[
+                    { etapa: "P", titulo: "Pré-Contratação", desc: "Documentos exigidos na pré-contratação", cor: "text-primary-green", chip: "bg-emerald-100 text-emerald-800" },
+                    { etapa: "F", titulo: "Formalização", desc: "Documentos exigidos na formalização", cor: "text-[#0d6efd]", chip: "bg-blue-100 text-blue-800" },
+                    { etapa: "", titulo: "Outros documentos", desc: "", cor: "text-text-gray", chip: "bg-slate-100 text-slate-700" }
+                  ].map(grp => {
+                    const doGrupo = checklistItems.filter(it => it.etapa === grp.etapa);
+                    if (doGrupo.length === 0) return null;
+                    return (
+                      <div key={grp.etapa || "outros"} className="flex flex-col gap-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${grp.chip}`}>
+                            {grp.etapa ? `(${grp.etapa}) ${grp.titulo}` : grp.titulo}
+                          </span>
+                          {grp.desc && <span className="text-[10px] text-text-gray font-light">{grp.desc}</span>}
+                        </div>
+                        {checklistItems.map((item, i) => (
+                          item.etapa !== grp.etapa ? null : (
+                            <label key={i} className="flex items-start gap-2.5 py-1.5 px-2 bg-slate-50 border border-border-gray/30 rounded cursor-pointer hover:bg-slate-100/70 transition-colors">
+                              <input
+                                type="checkbox"
+                                checked={item.checked}
+                                onChange={() => toggleChecklistItem(i)}
+                                className="rounded accent-primary-green mt-1 cursor-pointer"
+                              />
+                              <span className={`text-xs ${item.checked ? "line-through text-text-gray" : "text-text-dark font-medium"}`}>
+                                {item.text}
+                              </span>
+                            </label>
+                          )
+                        ))}
+                      </div>
+                    );
+                  })}
+                  {checklistItems.length === 0 && (
+                    <p className="text-xs text-text-gray text-center py-6">Nenhum documento cadastrado para esta linha.</p>
+                  )}
                 </div>
 
                 <div className="flex justify-between items-center pt-2 border-t border-border-gray/40">
