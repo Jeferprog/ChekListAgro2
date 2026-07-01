@@ -876,9 +876,28 @@ function _resolverLinhasChecklist(header, nomesExistentes) {
   return alvo;
 }
 
-/** Extrai o texto de um arquivo de checklist (.docx em base64, ou texto puro). */
+/** Extrai o texto de um arquivo de checklist (.xls/.xlsx, .docx, ou texto puro). */
 function _extrairTextoChecklist(conteudo, filename) {
   const nome = String(filename || "").toLowerCase();
+
+  // Planilha (.xls/.xlsx): converte via Drive e usa a 1ª célula não vazia de
+  // cada linha como uma linha de texto (cabeçalhos e itens ficam um por linha).
+  if (/\.(xlsx|xls)$/.test(nome)) {
+    const blob = _base64ParaBlob(conteudo, filename);
+    const valores = _xlsxParaValores(blob);
+    const linhas = [];
+    for (let r = 0; r < valores.length; r++) {
+      const row = valores[r] || [];
+      let cell = "";
+      for (let c = 0; c < row.length; c++) {
+        const v = String(row[c] || "").trim();
+        if (v) { cell = v; break; }
+      }
+      linhas.push(cell);
+    }
+    return linhas.join("\n");
+  }
+
   if (/\.docx$/.test(nome)) {
     const blob = _base64ParaBlob(conteudo, filename);
     blob.setContentType("application/zip");

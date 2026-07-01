@@ -673,14 +673,15 @@
         const file = e.target.files?.[0];
         if (!file) return;
         const nome = file.name.toLowerCase();
-        const ehDocx = nome.endsWith(".docx");
+        // .xls/.xlsx/.docx são binários -> enviar como base64; .txt/.csv como texto
+        const ehBinario = /\.(xlsx|xls|docx)$/.test(nome);
         setLoading(true);
         setLoadingText("Importando checklists...");
         const reader = new FileReader();
         reader.onload = async (event) => {
           try {
             let conteudo;
-            if (ehDocx) {
+            if (ehBinario) {
               conteudo = String(event.target.result || "").split(",")[1] || "";
             } else {
               conteudo = String(event.target.result || "");
@@ -711,7 +712,7 @@
           alert("✕ Não foi possível ler o arquivo.");
           e.target.value = "";
         };
-        if (ehDocx) reader.readAsDataURL(file);
+        if (ehBinario) reader.readAsDataURL(file);
         else reader.readAsText(file);
       };
 
@@ -1318,14 +1319,14 @@
                     <input
                       type="file"
                       id="checklistInputGas"
-                      accept=".docx,.txt,.csv"
+                      accept=".xls,.xlsx,.docx,.txt,.csv"
                       onChange={handleImportChecklist}
                       className="hidden"
                     />
                     <button
                       onClick={() => document.getElementById("checklistInputGas")?.click()}
                       className="bg-[#0d6efd] text-white text-xs font-bold px-4 py-2.5 rounded hover:bg-opacity-95 transition-all flex items-center gap-1.5 shadow-sm"
-                      title="Importar checklists (.docx ou .txt) com itens (P) pré-contratação e (F) formalização"
+                      title="Importar checklists (.xls, .xlsx, .docx ou .txt) com itens (P) pré-contratação e (F) formalização"
                     >
                       <IconCheck />
                       <span>Importar Checklist</span>
@@ -1554,7 +1555,7 @@
           {/* --- MODAL 1: CHECKLIST DE DOCUMENTAÇÃO --- */}
           {showChecklistModal && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-              <div className="bg-white rounded-lg border-l-4 border-accent-orange max-w-lg w-full p-6 shadow-xl relative animate-fadeIn">
+              <div className="bg-white rounded-lg border-l-4 border-accent-orange max-w-2xl w-full p-6 shadow-xl relative animate-fadeIn">
                 <div className="border-b border-border-gray/50 pb-3 mb-4 flex justify-between items-center">
                   <div>
                     <h3 className="font-bold text-primary-green text-base">Checklist de Documentação Exigida</h3>
@@ -1563,7 +1564,73 @@
                   <button onClick={() => setShowChecklistModal(false)} className="text-text-gray hover:text-text-dark font-bold text-xl">&times;</button>
                 </div>
 
-                <div className="flex flex-col gap-4 max-h-80 overflow-y-auto mb-4 p-1">
+                <div className="flex flex-col gap-4 max-h-[65vh] overflow-y-auto mb-4 p-1">
+
+                  {/* DADOS DO ASSOCIADO */}
+                  {associadoData && (
+                    <div className="border border-border-gray/50 rounded-lg p-3.5 bg-slate-50">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-primary-green mb-2">Dados do Associado</div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                        <div className="col-span-2">
+                          <span className="text-text-gray block text-[10px] uppercase font-bold">Nome</span>
+                          <span className="font-bold text-text-dark">{associadoData.nome || "-"}</span>
+                        </div>
+                        <div>
+                          <span className="text-text-gray block text-[10px] uppercase font-bold">Conta</span>
+                          <span className="font-medium">{associadoData.conta || "-"}</span>
+                        </div>
+                        <div>
+                          <span className="text-text-gray block text-[10px] uppercase font-bold">CPF/CNPJ</span>
+                          <span className="font-medium">{associadoData.cpfCnpj || "-"}</span>
+                        </div>
+                        <div className="col-span-2 border-t border-border-gray/40 pt-1.5">
+                          <span className="text-text-gray block text-[10px] uppercase font-bold">Renda Bruta Anual</span>
+                          <span className="font-bold text-primary-green">R$ {Number(associadoData.rendaAnual || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                        </div>
+                        <div className="col-span-2 border-t border-border-gray/40 pt-1.5">
+                          <span className="text-text-gray block text-[10px] uppercase font-bold">Renda Mensal</span>
+                          <span className="font-medium">R$ {Number(associadoData.rendaMensal || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* HISTÓRICO SICOR (LINHAS JÁ CONTRATADAS) */}
+                  {associadoData && creditHistory.length > 0 && (
+                    <div className="border border-border-gray/50 rounded-lg p-3.5">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-primary-green mb-2">Linhas Ativas Já Contratadas (Histórico SICOR)</div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="border-b border-border-gray text-text-gray font-bold">
+                              <th className="py-1.5">Safra</th>
+                              <th className="py-1.5">Produto</th>
+                              <th className="py-1.5">Atividade</th>
+                              <th className="py-1.5">IF</th>
+                              <th className="py-1.5 text-right">Valor Tomado (R$)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {creditHistory.map((h, i) => (
+                              <tr key={i} className="border-b border-border-gray/30">
+                                <td className="py-1.5 font-medium">{h.anoSafra}</td>
+                                <td className="py-1.5">{h.produto}</td>
+                                <td className="py-1.5">{h.atividade}</td>
+                                <td className="py-1.5">{h.ifFin}</td>
+                                <td className="py-1.5 text-right font-bold text-[#dc3545]">
+                                  R$ {Number(h.valorTomado || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* DOCUMENTOS DO CHECKLIST */}
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-primary-green">Documentos do Checklist</div>
+
                   {[
                     { etapa: "P", titulo: "Pré-Contratação", desc: "Documentos exigidos na pré-contratação", cor: "text-primary-green", chip: "bg-emerald-100 text-emerald-800" },
                     { etapa: "F", titulo: "Formalização", desc: "Documentos exigidos na formalização", cor: "text-[#0d6efd]", chip: "bg-blue-100 text-blue-800" },
