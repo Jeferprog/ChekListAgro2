@@ -75,7 +75,7 @@ function inicializarSheetConfig() {
     SHEET_CONFIG.getRange(1, 1, 1, 2).setFontWeight("bold").setBackground("#f58220").setFontColor("white");
     SHEET_CONFIG.appendRow(["Link Consulta Crédito (SICOR/CACR)", "https://www.bcb.gov.br/sicor/"]);
     SHEET_CONFIG.appendRow(["Link Pasta Base de Associados", ""]);
-    SHEET_CONFIG.appendRow(["E-mails Administradores", "gestor@cresol.com.br, analista@cresol.com.br"]);
+    SHEET_CONFIG.appendRow(["E-mails Administradores", "jeferson.deimling@cresolsicoper.com.br"]);
     SHEET_CONFIG.appendRow(["Limite Custeio PRONAF", "250000"]);
     SHEET_CONFIG.appendRow(["Limite Custeio PRONAMP", "1500000"]);
   }
@@ -203,7 +203,46 @@ function obterLinkBase() {
 
 function obterEmailsAdmin() {
   const emailsText = obterValorConfig("E-mails Administradores") || "";
-  return emailsText.split(",").map(e => e.trim()).filter(Boolean);
+  return emailsText
+    .split(/[;,\n]+/)
+    .map(function (e) { return e.trim().toLowerCase(); })
+    .filter(Boolean);
+}
+
+// ==================== CONTROLE DE ACESSO (ADMIN) ====================
+
+// Super administradores: sempre têm acesso, mesmo que não estejam na lista
+// da aba Configurações (evita bloqueio acidental do responsável).
+const SUPER_ADMINS = ["jeferson.deimling@cresolsicoper.com.br"];
+
+function usuarioAtualEmail() {
+  try {
+    var e = Session.getActiveUser().getEmail();
+    if (!e) e = Session.getEffectiveUser().getEmail();
+    return (e || "").toLowerCase();
+  } catch (err) {
+    return "";
+  }
+}
+
+/**
+ * Indica se o usuário logado pode acessar as abas administrativas
+ * (Linhas de Crédito e Configurações do Sistema).
+ * - Super admins sempre podem.
+ * - Se a lista de e-mails ainda não foi configurada, libera (config inicial).
+ * - Caso contrário, só os e-mails da lista têm acesso.
+ */
+function usuarioEhAdmin() {
+  const email = usuarioAtualEmail();
+  if (email && SUPER_ADMINS.indexOf(email) !== -1) return true;
+  const lista = obterEmailsAdmin();
+  if (lista.length === 0) return true;
+  return !!email && lista.indexOf(email) !== -1;
+}
+
+/** Retorna e-mail logado e se é admin — usado pelo frontend para exibir abas. */
+function obterInfoUsuario() {
+  return { email: usuarioAtualEmail(), admin: usuarioEhAdmin() };
 }
 
 function obterLimitesEnquadramento() {
@@ -277,12 +316,15 @@ function buscarLinhas(parametros) {
           let limiteMax = parseInt(linha[headers.indexOf("Limite Máx (R$)")]) || 0;
           let limiteMin = parseInt(linha[headers.indexOf("Limite Min (R$)")]) || 0;
 
+          let capCulturaValor = 0, capCulturaTipo = "";
           const cap = _capCultura(parametros.produto, culturasTxt);
           if (cap) {
             if (cap.tipo === "max") {
               if (limiteMax === 0 || cap.valor < limiteMax) limiteMax = cap.valor;
+              capCulturaValor = cap.valor; capCulturaTipo = "max";
             } else if (cap.tipo === "min") {
               if (cap.valor > limiteMin) limiteMin = cap.valor;
+              capCulturaValor = cap.valor; capCulturaTipo = "min";
             }
           }
 
@@ -304,7 +346,9 @@ function buscarLinhas(parametros) {
             itensFinanciaveis: linha[headers.indexOf("Itens Financiáveis")] || "",
             culturas: culturasTxt,
             limiteDisponivel: Math.max(0, limiteMax - (parametros.valorTomado || 0)),
-            valorTomado: parametros.valorTomado || 0
+            valorTomado: parametros.valorTomado || 0,
+            capCulturaValor: capCulturaValor,
+            capCulturaTipo: capCulturaTipo
           };
         } catch (e) {
           return null;
@@ -762,6 +806,187 @@ function salvarChecklist(nomeLinha, documentosTexto) {
 // Alias mantido para compatibilidade com o frontend (chama _salvarChecklist).
 function _salvarChecklist(nomeLinha, documentosTexto) {
   return salvarChecklist(nomeLinha, documentosTexto);
+}
+
+// -------- Importação de Checklists (documentos por etapa (P)/(F)) --------
+
+/** Normaliza texto p/ comparação: minúsculas, sem acento, espaços colapsados. */
+function _ckNorm(s) {
+  return String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim();
+}
+
+/** Retorna os tokens de faixa presentes no texto, ex.: ["faixa i","faixa iv"]. */
+function _ckFaixas(txt) {
+  const t = _ckNorm(txt).replace(/\bfx\b/g, "faixa");
+  const out = [];
+  const re = /faixa\s+(iv|iii|ii|i|v|\d+)/g;
+  let m;
+  while ((m = re.exec(t))) out.push("faixa " + m[1]);
+  return out;
+}
+
+/** Parte do cabeçalho antes da primeira "faixa"/"fx" (base do nome da linha). */
+function _ckBase(header) {
+  const t = _ckNorm(header).replace(/\bfx\b/g, "faixa");
+  const i = t.indexOf("faixa");
+  return i === -1 ? t : t.slice(0, i).trim();
+}
+
+/** Nomes das linhas cadastradas na aba Linhas. */
+function _nomesLinhasExistentes() {
+  if (!SHEET_LINHAS) return [];
+  const dados = SHEET_LINHAS.getDataRange().getValues();
+  if (dados.length <= 1) return [];
+  const idx = dados[0].indexOf("Nome Linha");
+  const out = [];
+  for (let r = 1; r < dados.length; r++) {
+    const n = String(dados[r][idx] || "").trim();
+    if (n) out.push(n);
+  }
+  return out;
+}
+
+/**
+ * Resolve o cabeçalho de um bloco de checklist para os nomes de linha reais.
+ * Expande enumerações de faixa ("Faixa I, Faixa II, Faixa III e FX IV").
+ */
+function _resolverLinhasChecklist(header, nomesExistentes) {
+  const base = _ckBase(header);
+  const faixas = _ckFaixas(header);
+  const alvo = [];
+
+  if (faixas.length) {
+    nomesExistentes.forEach(function (nome) {
+      const nn = _ckNorm(nome).replace(/\bfx\b/g, "faixa");
+      if (base && nn.indexOf(base) === -1) return; // a base precisa aparecer no nome
+      const f = _ckFaixas(nome);
+      if (f.length && faixas.indexOf(f[0]) !== -1) alvo.push(nome);
+    });
+    return alvo;
+  }
+
+  // Sem faixas: tenta igualdade exata; senão, correspondência por conteúdo
+  const hn = _ckNorm(header);
+  const exatos = nomesExistentes.filter(function (nome) { return _ckNorm(nome) === hn; });
+  if (exatos.length) return exatos;
+  nomesExistentes.forEach(function (nome) {
+    const nn = _ckNorm(nome);
+    if (hn && (nn.indexOf(hn) !== -1 || hn.indexOf(nn) !== -1)) alvo.push(nome);
+  });
+  return alvo;
+}
+
+/** Extrai o texto de um arquivo de checklist (.xls/.xlsx, .docx, ou texto puro). */
+function _extrairTextoChecklist(conteudo, filename) {
+  const nome = String(filename || "").toLowerCase();
+
+  // Planilha (.xls/.xlsx): converte via Drive e usa a 1ª célula não vazia de
+  // cada linha como uma linha de texto (cabeçalhos e itens ficam um por linha).
+  if (/\.(xlsx|xls)$/.test(nome)) {
+    const blob = _base64ParaBlob(conteudo, filename);
+    const valores = _xlsxParaValores(blob);
+    const linhas = [];
+    for (let r = 0; r < valores.length; r++) {
+      const row = valores[r] || [];
+      let cell = "";
+      for (let c = 0; c < row.length; c++) {
+        const v = String(row[c] || "").trim();
+        if (v) { cell = v; break; }
+      }
+      linhas.push(cell);
+    }
+    return linhas.join("\n");
+  }
+
+  if (/\.docx$/.test(nome)) {
+    const blob = _base64ParaBlob(conteudo, filename);
+    blob.setContentType("application/zip");
+    const arquivos = Utilities.unzip(blob);
+    let docXml = null;
+    for (let i = 0; i < arquivos.length; i++) {
+      if (arquivos[i].getName() === "word/document.xml") { docXml = arquivos[i].getDataAsString("UTF-8"); break; }
+    }
+    if (!docXml) return "";
+    return docXml
+      .replace(/<\/w:p>/g, "\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'");
+  }
+  // Texto puro (pode vir como base64/data URL ou já como texto)
+  let texto = String(conteudo || "");
+  if (texto.substring(0, 5) === "data:") {
+    const v = texto.indexOf(",");
+    if (v !== -1) texto = texto.substring(v + 1);
+  }
+  const semEsp = texto.replace(/\s/g, "");
+  if (semEsp.length > 0 && semEsp.indexOf(",") === -1 && semEsp.indexOf(";") === -1 &&
+      /^[A-Za-z0-9+/]+={0,2}$/.test(semEsp)) {
+    try { texto = Utilities.newBlob(Utilities.base64Decode(semEsp)).getDataAsString("UTF-8"); } catch (e) {}
+  }
+  return texto;
+}
+
+/**
+ * Importa checklists de um documento (.docx ou texto). Cada bloco começa com
+ * um cabeçalho (nome/faixas da linha) seguido dos itens marcados com (P) ou (F):
+ *   (P) = documentos de PRÉ-CONTRATAÇÃO
+ *   (F) = documentos de FORMALIZAÇÃO
+ * Os itens são gravados por linha, preservando o prefixo (P)/(F).
+ */
+function importarChecklists(conteudo, filename) {
+  try {
+    if (!SHEET_CHECKLIST) return _fail("Aba ChecklistDocs não encontrada.");
+    const texto = _extrairTextoChecklist(conteudo, filename);
+    if (!texto || !texto.trim()) return _fail("Não foi possível ler o conteúdo do arquivo.");
+
+    const linhasTxt = texto.split(/\r?\n/).map(function (s) { return s.trim(); });
+    const reItem = /^\(\s*([pfPF])\s*\)\s*(.*)$/;
+
+    // Monta blocos: cabeçalho + itens (P)/(F)
+    const blocos = [];
+    let atual = null;
+    for (let i = 0; i < linhasTxt.length; i++) {
+      const l = linhasTxt[i];
+      if (!l) continue;
+      const m = l.match(reItem);
+      if (m) {
+        if (!atual) { atual = { header: "", itens: [] }; blocos.push(atual); }
+        const etapa = m[1].toUpperCase();
+        const txt = m[2].trim();
+        if (txt) atual.itens.push("(" + etapa + ") " + txt);
+      } else {
+        atual = { header: l, itens: [] };
+        blocos.push(atual);
+      }
+    }
+
+    const nomesExistentes = _nomesLinhasExistentes();
+    const relatorio = [];
+    let totalLinhas = 0;
+
+    blocos.forEach(function (b) {
+      if (!b.itens.length) return;
+      const alvos = _resolverLinhasChecklist(b.header, nomesExistentes);
+      const textoDocs = b.itens.join("\n");
+      alvos.forEach(function (nome) { salvarChecklist(nome, textoDocs); totalLinhas++; });
+      relatorio.push({
+        header: b.header,
+        linhas: alvos,
+        naoEncontrado: alvos.length === 0,
+        qtdP: b.itens.filter(function (x) { return /^\(P\)/.test(x); }).length,
+        qtdF: b.itens.filter(function (x) { return /^\(F\)/.test(x); }).length
+      });
+    });
+
+    if (totalLinhas === 0) {
+      return _fail("Nenhuma linha correspondente encontrada para os títulos do arquivo. Confira se os nomes batem com as linhas cadastradas.");
+    }
+    return _ok({ linhasAtualizadas: totalLinhas, blocos: relatorio.length, relatorio: relatorio });
+  } catch (e) {
+    Logger.log("Erro em importarChecklists: " + e);
+    return _fail(e.toString());
+  }
 }
 
 // ==================== IMPORTAÇÃO DE LINHAS VIA .docx DA CRESOL ====================

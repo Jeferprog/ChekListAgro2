@@ -133,8 +133,9 @@
           console.warn(`Executando mock para o método ${methodName}`);
           setTimeout(() => {
             if (methodName === "obterLinkConsulta") resolve("https://www.bcb.gov.br/sicor/");
+            else if (methodName === "obterInfoUsuario") resolve({ email: "dev@local", admin: true });
             else if (methodName === "obterLinkBase") resolve("https://drive.google.com/drive/folders/exemplo");
-            else if (methodName === "obterEmailsAdmin") resolve(["gestor@cresol.com.br", "analista@cresol.com.br"]);
+            else if (methodName === "obterEmailsAdmin") resolve(["jeferson.deimling@cresolsicoper.com.br"]);
             else if (methodName === "obterLimitesEnquadramento") resolve({ pronaf: 250000, pronamp: 1500000 });
             else if (methodName === "listarTodasAsLinhas") resolve([
               { id: "L-001", nome: "PRONAF CUSTEIO AGRÍCOLA - Faixa I", orgao: "Cresol / BNDES", finalidadePrincipal: "Custeio", finalidades: "agricola,custeio", enquadramento: "Sem limite/R$ 500 mil", taxaMin: 3, taxaMax: 4.5, taxaDescricao: "3% a 4.5% a.a.", prazo: 24, carencia: 3, limiteMin: 5000, limiteMax: 250000, requisitos: "DAP ativa", documentos: "(P) RG\n(P) DAP/CAF Ativa", status: "Ativa", observacoes: "", itensFinanciaveis: "Sementes, defensivos", culturas: "MILHO (até 25 mil), SOJA, TRIGO" }
@@ -145,7 +146,8 @@
             else if (methodName === "buscarCreditoTomado") resolve({
               sucesso: true, items: [{ anoSafra: "2025/2026", produto: "PRONAF CUSTEIO AGRÍCOLA", atividade: "Milho", ifFin: "Cresol", valorFinanciado: 45000, aliquotaProagro: 3, valorTomado: 46350 }], totalFinanciado: 46350
             });
-            else if (methodName === "obterChecklistDocs") resolve(["RG e CPF", "DAP/CAF Ativa", "Matrícula da Terra"]);
+            else if (methodName === "obterChecklistDocs") resolve(["(P) Extrato DAP", "(P) CAR Recibo", "(F) CETCR", "(F) CCB"]);
+            else if (methodName === "importarChecklists") resolve({ sucesso: true, success: true, linhasAtualizadas: 4, blocos: 1, relatorio: [] });
             else resolve({ success: true });
           }, 600);
         }
@@ -155,6 +157,8 @@
     // --- COMPONENTE PRINCIPAL ---
     function App() {
       const [currentTab, setCurrentTab] = useState("consulta");
+      const [isAdmin, setIsAdmin] = useState(false);
+      const [userEmail, setUserEmail] = useState("");
       const [loading, setLoading] = useState(false);
       const [loadingText, setLoadingText] = useState("Carregando...");
       const [configs, setConfigs] = useState([]);
@@ -195,9 +199,25 @@
 
       // Carregar dados iniciais
       useEffect(() => {
+        carregarInfoUsuario();
         carregarConfiguracoes();
         carregarLinhas();
       }, []);
+
+      // Perfil do usuário: define se as abas administrativas aparecem
+      const carregarInfoUsuario = async () => {
+        try {
+          const info = await runGas("obterInfoUsuario");
+          const admin = !!(info && info.admin);
+          setIsAdmin(admin);
+          setUserEmail((info && info.email) || "");
+          // Se não é admin e está numa aba administrativa, volta para a consulta
+          if (!admin) setCurrentTab("consulta");
+        } catch (e) {
+          console.error(e);
+          setIsAdmin(false);
+        }
+      };
 
       const carregarConfiguracoes = async () => {
         try {
@@ -292,20 +312,35 @@
             if (n.includes("PRONAMP")) return "pronamp";
             const e = String(enqTexto || "").toLowerCase();
             if (e.includes("sem limite")) return "pronaf";
-            if (e.includes("500 mil") && (e.includes("3.5") || e.includes("3,5") || e.includes("1.5") || e.includes("1,5"))) return "pronamp";
+            if (e.includes("500 mil") && (e.includes("3.5") || e.includes("3,5"))) return "pronamp";
             return "demais";
           };
 
+          // Interpreta "mil" (x1.000) e "mi"/"milhão" (x1.000.000) usando
+          // fronteira de palavra — evita que "mil" seja lido como "mi".
           const helperParseRenda = (texto) => {
             if (!texto) return null;
-            const t = texto.toLowerCase();
+            const t = String(texto).toLowerCase().trim();
             const m = t.match(/([\d.,]+)/);
             if (!m) return null;
             let num = parseFloat(m[1].replace(/\s/g, "").replace(",", "."));
             if (isNaN(num)) return null;
-            if (t.includes("milh") || t.includes("mi")) num *= 1000000;
-            else if (t.includes("mil")) num *= 1000;
+            if (/milh|\bmi\b/.test(t)) num *= 1000000;
+            else if (/\bmil\b/.test(t)) num *= 1000;
             return num;
+          };
+
+          // Parser para o teto por cultura ("(até 25 mil)"): remove pontos de
+          // milhar antes de converter (equivalente ao _parseValorTexto do backend).
+          const helperParseValorTexto = (s) => {
+            const t = String(s || "").toLowerCase();
+            const m = t.match(/([\d.,]+)/);
+            if (!m) return null;
+            let n = parseFloat(m[1].replace(/\./g, "").replace(",", "."));
+            if (isNaN(n)) return null;
+            if (/milh|\bmi\b/.test(t)) n *= 1000000;
+            else if (/\bmil\b/.test(t)) n *= 1000;
+            return n;
           };
 
           const helperValidarRenda = (rendaVal, enqTexto) => {
@@ -340,12 +375,15 @@
           const helperKeywordMatch = (searched, line) => {
             if (!searched) return true;
             const term = searched.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-            if (!term || term.length < 3) return true;
+            if (!term) return true;
             const textToSearch = [
               line.nome, line.finalidadePrincipal, line.finalidades,
               line.itensFinanciaveis, line.culturas, line.documentos, line.observacoes
             ].join(" ").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-            return term.split(/\s+/).some(word => textToSearch.includes(word));
+            // S\u00f3 considera palavras com 3+ letras; basta uma casar (igual ao backend)
+            const words = term.split(/\s+/).filter(w => w.length >= 3);
+            if (words.length === 0) return true;
+            return words.some(word => textToSearch.includes(word));
           };
 
           const helperCapCultura = (productText, culturesText) => {
@@ -353,14 +391,16 @@
             const term = productText.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
             if (term.length < 3) return null;
             const cultures = culturesText.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-            const matchMax = cultures.match(new RegExp(term + "[^,;()]*\\(\\s*ate\\s*([^)]+)\\)"));
+            // Escapa caracteres especiais do termo antes de montar o RegExp
+            const termEsc = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const matchMax = cultures.match(new RegExp(termEsc + "[^,;()]*\\(\\s*ate\\s*([^)]+)\\)"));
             if (matchMax) {
-              const v = helperParseRenda(matchMax[1]);
+              const v = helperParseValorTexto(matchMax[1]);
               if (v) return { tipo: "max", valor: v };
             }
-            const matchMin = cultures.match(new RegExp(term + "[^,;()]*\\(\\s*acima\\s*de\\s*([^)]+)\\)"));
+            const matchMin = cultures.match(new RegExp(termEsc + "[^,;()]*\\(\\s*acima\\s*de\\s*([^)]+)\\)"));
             if (matchMin) {
-              const v = helperParseRenda(matchMin[1]);
+              const v = helperParseValorTexto(matchMin[1]);
               if (v) return { tipo: "min", valor: v };
             }
             return null;
@@ -580,6 +620,13 @@
         }
       };
 
+      // Separa o prefixo (P)/(F) do texto do documento
+      const parseChecklistItem = (raw) => {
+        const m = String(raw || "").trim().match(/^\(\s*([pfPF])\s*\)\s*(.*)$/);
+        if (m) return { text: m[2].trim(), etapa: m[1].toUpperCase(), checked: false };
+        return { text: String(raw || "").trim(), etapa: "", checked: false };
+      };
+
       // VER CHECKLIST DE DOCUMENTOS CUSTOMIZADO
       const handleOpenChecklist = async (nomeLinha) => {
         setChecklistLineName(nomeLinha);
@@ -587,7 +634,7 @@
         setLoadingText("Carregando checklist...");
         try {
           const docs = await runGas("obterChecklistDocs", nomeLinha);
-          setChecklistItems(docs.map(text => ({ text, checked: false })));
+          setChecklistItems(docs.map(parseChecklistItem));
           setShowChecklistModal(true);
         } catch (e) {
           console.error(e);
@@ -603,12 +650,14 @@
         setChecklistItems(next);
       };
 
-      // SALVAR CUSTOM CHECKLIST
+      // SALVAR CUSTOM CHECKLIST (reconstrói o prefixo (P)/(F))
       const handleSaveChecklistCustom = async () => {
         setLoading(true);
         setLoadingText("Salvando checklist...");
         try {
-          const text = checklistItems.map(i => i.text).join("\n");
+          const text = checklistItems
+            .map(i => (i.etapa ? "(" + i.etapa + ") " : "") + i.text)
+            .join("\n");
           await runGas("_salvarChecklist", checklistLineName, text);
           alert("Checklist atualizado com sucesso!");
         } catch (e) {
@@ -617,6 +666,54 @@
         } finally {
           setLoading(false);
         }
+      };
+
+      // IMPORTAR CHECKLISTS (.docx ou .txt) — divide em etapas (P)/(F) por linha
+      const handleImportChecklist = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const nome = file.name.toLowerCase();
+        // .xls/.xlsx/.docx são binários -> enviar como base64; .txt/.csv como texto
+        const ehBinario = /\.(xlsx|xls|docx)$/.test(nome);
+        setLoading(true);
+        setLoadingText("Importando checklists...");
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          try {
+            let conteudo;
+            if (ehBinario) {
+              conteudo = String(event.target.result || "").split(",")[1] || "";
+            } else {
+              conteudo = String(event.target.result || "");
+            }
+            const res = await runGas("importarChecklists", conteudo, file.name);
+            if (res && (res.sucesso || res.success)) {
+              const naoEnc = (res.relatorio || []).filter(r => r.naoEncontrado);
+              let msg = `✓ Checklists importados! ${res.linhasAtualizadas} linha(s) atualizada(s) em ${res.blocos} bloco(s).`;
+              if (naoEnc.length) {
+                msg += `\n\n⚠️ ${naoEnc.length} título(s) sem linha correspondente:\n` +
+                  naoEnc.map(r => "• " + r.header).join("\n");
+              }
+              alert(msg);
+              await carregarLinhas();
+            } else {
+              alert("✕ " + ((res && (res.erro || res.error)) || "Falha ao importar."));
+            }
+          } catch (err) {
+            console.error(err);
+            alert("✕ Erro ao importar: " + (err && err.message ? err.message : err));
+          } finally {
+            setLoading(false);
+            e.target.value = "";
+          }
+        };
+        reader.onerror = () => {
+          setLoading(false);
+          alert("✕ Não foi possível ler o arquivo.");
+          e.target.value = "";
+        };
+        if (ehBinario) reader.readAsDataURL(file);
+        else reader.readAsText(file);
       };
 
       // SINCRONIZAR BASE ASSOCIADOS (CSV DRIVE)
@@ -778,6 +875,10 @@
         setDocxItems(next);
       };
 
+      // Link do botão "Acessar SICOR (BCB)" vem da configuração salva
+      const linkSicor = ((configs.find(c => c.param === "Link Consulta Crédito (SICOR/CACR)") || {}).valor || "").trim()
+        || "https://www.bcb.gov.br/sicor/";
+
       return (
         <div className="min-h-screen flex flex-col bg-[#f8f9fa] pb-12">
           
@@ -799,7 +900,7 @@
               {/* Botão de Ação Direta do Header */}
               <div className="flex gap-2.5">
                 <button
-                  onClick={() => window.open("https://www.bcb.gov.br/sicor/", "_blank")}
+                  onClick={() => window.open(linkSicor, "_blank")}
                   className="bg-accent-orange text-white text-xs font-bold px-4 py-2.5 rounded hover:bg-opacity-95 transition-all shadow flex items-center gap-1.5"
                 >
                   <IconMapPin />
@@ -830,28 +931,32 @@
                 <IconSearch />
                 <span>Simulador & Consultas</span>
               </button>
-              <button
-                onClick={() => setCurrentTab("linhas")}
-                className={`py-4 px-5 text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${
-                  currentTab === "linhas"
-                    ? "border-accent-orange text-primary-green"
-                    : "border-transparent text-text-gray hover:text-text-dark"
-                }`}
-              >
-                <IconClipboardList />
-                <span>Linhas de Crédito</span>
-              </button>
-              <button
-                onClick={() => setCurrentTab("config")}
-                className={`py-4 px-5 text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${
-                  currentTab === "config"
-                    ? "border-accent-orange text-primary-green"
-                    : "border-transparent text-text-gray hover:text-text-dark"
-                }`}
-              >
-                <IconSettings />
-                <span>Configurações do Sistema</span>
-              </button>
+              {isAdmin && (
+                <button
+                  onClick={() => setCurrentTab("linhas")}
+                  className={`py-4 px-5 text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${
+                    currentTab === "linhas"
+                      ? "border-accent-orange text-primary-green"
+                      : "border-transparent text-text-gray hover:text-text-dark"
+                  }`}
+                >
+                  <IconClipboardList />
+                  <span>Linhas de Crédito</span>
+                </button>
+              )}
+              {isAdmin && (
+                <button
+                  onClick={() => setCurrentTab("config")}
+                  className={`py-4 px-5 text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${
+                    currentTab === "config"
+                      ? "border-accent-orange text-primary-green"
+                      : "border-transparent text-text-gray hover:text-text-dark"
+                  }`}
+                >
+                  <IconSettings />
+                  <span>Configurações do Sistema</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -1187,7 +1292,7 @@
             )}
 
             {/* TAB CONTENT: TABELA DE GERENCIAMENTO DE LINHAS DE CRÉDITO */}
-            {currentTab === "linhas" && (
+            {isAdmin && currentTab === "linhas" && (
               <div className="bg-white p-6 rounded-lg border border-border-gray shadow-xs">
                 
                 {/* SUBHEADER COM AÇÕES */}
@@ -1210,6 +1315,21 @@
                     >
                       <IconUpload />
                       <span>Importar via DOCX Cresol</span>
+                    </button>
+                    <input
+                      type="file"
+                      id="checklistInputGas"
+                      accept=".xls,.xlsx,.docx,.txt,.csv"
+                      onChange={handleImportChecklist}
+                      className="hidden"
+                    />
+                    <button
+                      onClick={() => document.getElementById("checklistInputGas")?.click()}
+                      className="bg-[#0d6efd] text-white text-xs font-bold px-4 py-2.5 rounded hover:bg-opacity-95 transition-all flex items-center gap-1.5 shadow-sm"
+                      title="Importar checklists (.xls, .xlsx, .docx ou .txt) com itens (P) pré-contratação e (F) formalização"
+                    >
+                      <IconCheck />
+                      <span>Importar Checklist</span>
                     </button>
                     <button
                       onClick={openAddModal}
@@ -1276,7 +1396,7 @@
             )}
 
             {/* TAB CONTENT: CONFIGURAÇÕES DO SISTEMA */}
-            {currentTab === "config" && (
+            {isAdmin && currentTab === "config" && (
               <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   
@@ -1290,6 +1410,11 @@
                       {configs.map((c, i) => (
                         <div key={i} className="flex flex-col gap-1.5">
                           <label className="text-xs font-bold text-text-dark">{c.param}</label>
+                          {c.param === "E-mails Administradores" && (
+                            <p className="text-[10px] text-text-gray font-light -mt-1">
+                              Perfis com acesso às abas administrativas (Linhas de Crédito e Configurações). Separe vários e-mails por vírgula.
+                            </p>
+                          )}
                           <div className="flex gap-2">
                             <input
                               type="text"
@@ -1430,7 +1555,7 @@
           {/* --- MODAL 1: CHECKLIST DE DOCUMENTAÇÃO --- */}
           {showChecklistModal && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-              <div className="bg-white rounded-lg border-l-4 border-accent-orange max-w-lg w-full p-6 shadow-xl relative animate-fadeIn">
+              <div className="bg-white rounded-lg border-l-4 border-accent-orange max-w-2xl w-full p-6 shadow-xl relative animate-fadeIn">
                 <div className="border-b border-border-gray/50 pb-3 mb-4 flex justify-between items-center">
                   <div>
                     <h3 className="font-bold text-primary-green text-base">Checklist de Documentação Exigida</h3>
@@ -1439,20 +1564,109 @@
                   <button onClick={() => setShowChecklistModal(false)} className="text-text-gray hover:text-text-dark font-bold text-xl">&times;</button>
                 </div>
 
-                <div className="flex flex-col gap-2 max-h-60 overflow-y-auto mb-4 p-1">
-                  {checklistItems.map((item, i) => (
-                    <label key={i} className="flex items-start gap-2.5 py-1.5 px-2 bg-slate-50 border border-border-gray/30 rounded cursor-pointer hover:bg-slate-100/70 transition-colors">
-                      <input
-                        type="checkbox"
-                        checked={item.checked}
-                        onChange={() => toggleChecklistItem(i)}
-                        className="rounded accent-primary-green mt-1 cursor-pointer"
-                      />
-                      <span className={`text-xs ${item.checked ? "line-through text-text-gray" : "text-text-dark font-medium"}`}>
-                        {item.text}
-                      </span>
-                    </label>
-                  ))}
+                <div className="flex flex-col gap-4 max-h-[65vh] overflow-y-auto mb-4 p-1">
+
+                  {/* DADOS DO ASSOCIADO */}
+                  {associadoData && (
+                    <div className="border border-border-gray/50 rounded-lg p-3.5 bg-slate-50">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-primary-green mb-2">Dados do Associado</div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                        <div className="col-span-2">
+                          <span className="text-text-gray block text-[10px] uppercase font-bold">Nome</span>
+                          <span className="font-bold text-text-dark">{associadoData.nome || "-"}</span>
+                        </div>
+                        <div>
+                          <span className="text-text-gray block text-[10px] uppercase font-bold">Conta</span>
+                          <span className="font-medium">{associadoData.conta || "-"}</span>
+                        </div>
+                        <div>
+                          <span className="text-text-gray block text-[10px] uppercase font-bold">CPF/CNPJ</span>
+                          <span className="font-medium">{associadoData.cpfCnpj || "-"}</span>
+                        </div>
+                        <div className="col-span-2 border-t border-border-gray/40 pt-1.5">
+                          <span className="text-text-gray block text-[10px] uppercase font-bold">Renda Bruta Anual</span>
+                          <span className="font-bold text-primary-green">R$ {Number(associadoData.rendaAnual || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                        </div>
+                        <div className="col-span-2 border-t border-border-gray/40 pt-1.5">
+                          <span className="text-text-gray block text-[10px] uppercase font-bold">Renda Mensal</span>
+                          <span className="font-medium">R$ {Number(associadoData.rendaMensal || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* HISTÓRICO SICOR (LINHAS JÁ CONTRATADAS) */}
+                  {associadoData && creditHistory.length > 0 && (
+                    <div className="border border-border-gray/50 rounded-lg p-3.5">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-primary-green mb-2">Linhas Ativas Já Contratadas (Histórico SICOR)</div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="border-b border-border-gray text-text-gray font-bold">
+                              <th className="py-1.5">Safra</th>
+                              <th className="py-1.5">Produto</th>
+                              <th className="py-1.5">Atividade</th>
+                              <th className="py-1.5">IF</th>
+                              <th className="py-1.5 text-right">Valor Tomado (R$)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {creditHistory.map((h, i) => (
+                              <tr key={i} className="border-b border-border-gray/30">
+                                <td className="py-1.5 font-medium">{h.anoSafra}</td>
+                                <td className="py-1.5">{h.produto}</td>
+                                <td className="py-1.5">{h.atividade}</td>
+                                <td className="py-1.5">{h.ifFin}</td>
+                                <td className="py-1.5 text-right font-bold text-[#dc3545]">
+                                  R$ {Number(h.valorTomado || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* DOCUMENTOS DO CHECKLIST */}
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-primary-green">Documentos do Checklist</div>
+
+                  {[
+                    { etapa: "P", titulo: "Pré-Contratação", desc: "Documentos exigidos na pré-contratação", cor: "text-primary-green", chip: "bg-emerald-100 text-emerald-800" },
+                    { etapa: "F", titulo: "Formalização", desc: "Documentos exigidos na formalização", cor: "text-[#0d6efd]", chip: "bg-blue-100 text-blue-800" },
+                    { etapa: "", titulo: "Outros documentos", desc: "", cor: "text-text-gray", chip: "bg-slate-100 text-slate-700" }
+                  ].map(grp => {
+                    const doGrupo = checklistItems.filter(it => it.etapa === grp.etapa);
+                    if (doGrupo.length === 0) return null;
+                    return (
+                      <div key={grp.etapa || "outros"} className="flex flex-col gap-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${grp.chip}`}>
+                            {grp.etapa ? `(${grp.etapa}) ${grp.titulo}` : grp.titulo}
+                          </span>
+                          {grp.desc && <span className="text-[10px] text-text-gray font-light">{grp.desc}</span>}
+                        </div>
+                        {checklistItems.map((item, i) => (
+                          item.etapa !== grp.etapa ? null : (
+                            <label key={i} className="flex items-start gap-2.5 py-1.5 px-2 bg-slate-50 border border-border-gray/30 rounded cursor-pointer hover:bg-slate-100/70 transition-colors">
+                              <input
+                                type="checkbox"
+                                checked={item.checked}
+                                onChange={() => toggleChecklistItem(i)}
+                                className="rounded accent-primary-green mt-1 cursor-pointer"
+                              />
+                              <span className={`text-xs ${item.checked ? "line-through text-text-gray" : "text-text-dark font-medium"}`}>
+                                {item.text}
+                              </span>
+                            </label>
+                          )
+                        ))}
+                      </div>
+                    );
+                  })}
+                  {checklistItems.length === 0 && (
+                    <p className="text-xs text-text-gray text-center py-6">Nenhum documento cadastrado para esta linha.</p>
+                  )}
                 </div>
 
                 <div className="flex justify-between items-center pt-2 border-t border-border-gray/40">
