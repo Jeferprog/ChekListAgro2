@@ -666,32 +666,40 @@
         reader.readAsText(file);
       };
 
-      // IMPORTAR BASE DE CRÉDITO (XLSX / CSV)
+      // IMPORTAR BASE DE CRÉDITO (XLSX / CSV) — envia como base64 para suportar
+      // .xlsx binário (o backend converte via Drive) e também .csv.
       const handleXlsxCreditUpload = async (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
 
         setLoading(true);
-        setLoadingText("Processando arquivo de crédito tomada...");
+        setLoadingText("Processando arquivo de crédito tomado...");
         const reader = new FileReader();
         reader.onload = async (event) => {
           try {
-            const text = event.target.result;
-            const resp = await runGas("processarArquivoCredito", file.name, text);
-            if (resp && resp.success) {
-              alert(`✓ Base de crédito tomada atualizada! ${resp.registros} registros importados.`);
+            // event.target.result = "data:...;base64,XXXX" -> envia só o base64
+            const dataUrl = String(event.target.result || "");
+            const base64 = dataUrl.split(",")[1] || "";
+            const resp = await runGas("processarArquivoCredito", file.name, base64);
+            if (resp && (resp.success || resp.sucesso)) {
+              alert(`✓ Base de crédito tomado atualizada! ${resp.registros} registro(s) importado(s).`);
             } else {
-              alert("✕ Erro ao processar arquivo: " + (resp.error || "Formato inválido."));
+              alert("✕ Erro ao processar arquivo: " + ((resp && (resp.error || resp.erro)) || "Formato inválido."));
             }
           } catch (err) {
             console.error(err);
-            alert("✕ Erro: " + err.message);
+            alert("✕ Erro: " + (err && err.message ? err.message : err));
           } finally {
             setLoading(false);
             e.target.value = "";
           }
         };
-        reader.readAsText(file);
+        reader.onerror = () => {
+          setLoading(false);
+          alert("✕ Não foi possível ler o arquivo selecionado.");
+          e.target.value = "";
+        };
+        reader.readAsDataURL(file);
       };
 
       // IMPORTAR LINHAS VIA .docx REAL DA CRESOL (envia o arquivo como base64)

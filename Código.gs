@@ -1236,96 +1236,180 @@ function atualizarBaseAssociados() {
 }
 
 /**
- * Importa a base de crédito tomado a partir do texto de um CSV.
- * Assinatura compatível com o frontend: (filename, contentText).
+ * Faz upload de um blob para o Drive convertendo para um tipo Google
+ * (Sheets/Docs) e retorna o ID do arquivo convertido. Necessário para ler
+ * .xlsx/.xls (binários) que o Utilities.parseCsv não consegue interpretar.
+ */
+function _uploadConvert(blob, targetMime) {
+  const boundary = "conv" + Date.now();
+  const metadata = { name: "tmp_conv_" + Date.now(), mimeType: targetMime };
+  const ct = blob.getContentType() || "application/octet-stream";
+  const pre = "--" + boundary + "\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n" +
+    JSON.stringify(metadata) + "\r\n--" + boundary + "\r\nContent-Type: " + ct + "\r\n\r\n";
+  const post = "\r\n--" + boundary + "--";
+  const bytes = Utilities.newBlob(pre).getBytes().concat(blob.getBytes()).concat(Utilities.newBlob(post).getBytes());
+
+  const res = UrlFetchApp.fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true", {
+    method: "post",
+    contentType: "multipart/related; boundary=" + boundary,
+    payload: bytes,
+    headers: { Authorization: "Bearer " + ScriptApp.getOAuthToken() },
+    muteHttpExceptions: true
+  });
+  const code = res.getResponseCode();
+  if (code < 200 || code >= 300) {
+    throw new Error("Falha na conversão do arquivo (HTTP " + code + "): " + res.getContentText().substring(0, 200));
+  }
+  return JSON.parse(res.getContentText()).id;
+}
+
+/** Converte um blob .xlsx/.xls em matriz de valores (lê a 1ª aba). */
+function _xlsxParaValores(blob) {
+  const fileId = _uploadConvert(blob, "application/vnd.google-apps.spreadsheet");
+  try {
+    return SpreadsheetApp.openById(fileId).getSheets()[0].getDataRange().getValues();
+  } finally {
+    try { DriveApp.getFileById(fileId).setTrashed(true); } catch (e) {}
+  }
+}
+
+/** Remove prefixo de data URL e converte string base64 em Blob. */
+function _base64ParaBlob(conteudo, filename) {
+  let b64 = String(conteudo || "");
+  if (b64.substring(0, 5) === "data:") {
+    const v = b64.indexOf(",");
+    if (v !== -1) b64 = b64.substring(v + 1);
+  }
+  b64 = b64.replace(/\s/g, "");
+  const bytes = Utilities.base64Decode(b64);
+  return Utilities.newBlob(bytes, "application/octet-stream", filename || "arquivo");
+}
+
+/**
+ * Importa a base de crédito tomado. Aceita .csv (texto ou base64) e .xlsx/.xls
+ * (base64). Assinatura compatível com o frontend: (filename, contentText).
+ * - .xlsx/.xls: converte via Drive e lê os valores.
+ * - .csv: faz parse do texto.
+ * Detecta o layout automaticamente: cabeçalhos nomeados OU posições fixas do
+ * export SICOR/CACR (C=Ano Safra, D=Valor, G=Produto, K=IF, S=Atividade,
+ * W=CPF/CNPJ, AB=Alíquota ProAgro).
  */
 function processarArquivoCredito(filename, contentText) {
   if (!SHEET_BASE_CREDITO) return _fail("Aba BaseCredito não encontrada.");
 
   try {
-    // Aceita tanto (filename, contentText) quanto um objeto { conteudo }
+    // Compatibilidade: aceita objeto { nome, conteudo }
     if (contentText === undefined && filename && typeof filename === "object") {
       contentText = filename.conteudo || filename.content || "";
+      filename = filename.nome || "credito.csv";
     }
-    if (!contentText) {
-      return _fail("Arquivo vazio ou não foi possível ler o conteúdo.");
-    }
+    if (!contentText) return _fail("Arquivo vazio ou não foi possível ler o conteúdo.");
 
-    const headers = ["nr_cpf_cnpj", "ano_safra", "produto", "atividade", "if_fin", "valor_financiado", "aliquota_proagro", "valor_tomado"];
-    SHEET_BASE_CREDITO.clearContents();
-    SHEET_BASE_CREDITO.getRange(1, 1, 1, headers.length).setValues([headers]);
+    const nome = String(filename || "").toLowerCase();
+    const ehXlsx = /\.(xlsx|xls)$/.test(nome);
 
-    // Detectar delimitador
-    var delimiter = ",";
-    if (contentText.indexOf(";") > -1) {
-      delimiter = ";";
-    }
-
-    // Fazer parse do CSV com tratamento de erro
-    var parsedData;
-    try {
-      parsedData = Utilities.parseCsv(contentText, delimiter);
-    } catch (e) {
-      // Se falhar, tentar com outro delimitador
-      delimiter = delimiter === "," ? ";" : ",";
-      parsedData = Utilities.parseCsv(contentText, delimiter);
-    }
-
-    if (!parsedData || parsedData.length <= 1) {
-      return _ok({ registros: 0, atualizado: new Date().toLocaleString('pt-BR') });
-    }
-
-    var csvHeaders = parsedData[0].map(function(h) { return String(h || "").trim().toLowerCase(); });
-
-    const cpfIdx = csvHeaders.indexOf("nr_cpf_cnpj") !== -1 ? csvHeaders.indexOf("nr_cpf_cnpj") : csvHeaders.indexOf("cpf");
-    const safraIdx = csvHeaders.indexOf("ano_safra") !== -1 ? csvHeaders.indexOf("ano_safra") : csvHeaders.indexOf("safra");
-    const produtoIdx = csvHeaders.indexOf("produto") !== -1 ? csvHeaders.indexOf("produto") : csvHeaders.indexOf("linha");
-    const atividadeIdx = csvHeaders.indexOf("atividade") !== -1 ? csvHeaders.indexOf("atividade") : csvHeaders.indexOf("cultura");
-    const ifIdx = csvHeaders.indexOf("if_fin") !== -1 ? csvHeaders.indexOf("if_fin") : csvHeaders.indexOf("instituicao");
-    const valorFinIdx = csvHeaders.indexOf("valor_financiado") !== -1 ? csvHeaders.indexOf("valor_financiado") : csvHeaders.indexOf("valor");
-    const proagroIdx = csvHeaders.indexOf("aliquota_proagro") !== -1 ? csvHeaders.indexOf("aliquota_proagro") : csvHeaders.indexOf("proagro");
-    const valorTomIdx = csvHeaders.indexOf("valor_tomado") !== -1 ? csvHeaders.indexOf("valor_tomado") : csvHeaders.indexOf("tomado");
-
-    var count = 0;
-    var rowsToAppend = [];
-
-    for (var i = 1; i < parsedData.length; i++) {
-      var row = parsedData[i];
-      if (!row || row.length < 2) continue;
-
-      var cpf = cpfIdx !== -1 ? String(row[cpfIdx] || "").trim() : "";
-      var safra = safraIdx !== -1 ? String(row[safraIdx] || "").trim() : "2025/2026";
-      var produto = produtoIdx !== -1 ? String(row[produtoIdx] || "").trim().toUpperCase() : "CRÉDITO RURAL";
-      var atividade = atividadeIdx !== -1 ? String(row[atividadeIdx] || "").trim() : "Outros";
-      var ifFin = ifIdx !== -1 ? String(row[ifIdx] || "").trim() : "Cresol";
-
-      var valFinText = valorFinIdx !== -1 ? String(row[valorFinIdx] || "0").trim() : "0";
-      valFinText = valFinText.replace(/[R$\s]/g, "").replace(/\./g, "").replace(",", ".");
-      var valFin = parseFloat(valFinText) || 0;
-
-      var aliquotaText = proagroIdx !== -1 ? String(row[proagroIdx] || "0").trim() : "0";
-      aliquotaText = aliquotaText.replace(/[%\s]/g, "").replace(",", ".");
-      var aliquota = parseFloat(aliquotaText) || 0;
-
-      var valTomText = valorTomIdx !== -1 ? String(row[valorTomIdx] || valFin).trim() : String(valFin);
-      valTomText = valTomText.replace(/[R$\s]/g, "").replace(/\./g, "").replace(",", ".");
-      var valTom = parseFloat(valTomText) || valFin;
-
-      if (cpf) {
-        rowsToAppend.push([cpf, safra, produto, atividade, ifFin, valFin, aliquota, valTom]);
-        count++;
+    let valores;
+    if (ehXlsx) {
+      // .xlsx/.xls -> converte via Drive e lê a matriz de valores
+      const blob = _base64ParaBlob(contentText, filename);
+      valores = _xlsxParaValores(blob);
+    } else {
+      // .csv -> pode vir como texto puro ou base64 (data URL)
+      let texto = String(contentText);
+      if (texto.substring(0, 5) === "data:") {
+        const v = texto.indexOf(",");
+        if (v !== -1) texto = texto.substring(v + 1);
       }
+      const semEsp = texto.replace(/\s/g, "");
+      // Se for base64 (sem vírgulas/; e só alfabeto base64), decodifica p/ texto
+      if (semEsp.length > 0 && semEsp.indexOf(",") === -1 && semEsp.indexOf(";") === -1 &&
+          /^[A-Za-z0-9+/]+={0,2}$/.test(semEsp)) {
+        try { texto = Utilities.newBlob(Utilities.base64Decode(semEsp)).getDataAsString("UTF-8"); } catch (e) {}
+      }
+      const delim = ((texto.split("\n")[0] || "").split(";").length > (texto.split("\n")[0] || "").split(",").length) ? ";" : ",";
+      valores = Utilities.parseCsv(texto, delim);
     }
 
-    if (rowsToAppend.length > 0) {
-      SHEET_BASE_CREDITO.getRange(2, 1, rowsToAppend.length, headers.length).setValues(rowsToAppend);
-    }
-
-    return _ok({ registros: count, atualizado: new Date().toLocaleString('pt-BR') });
+    return _gravarCreditoMatriz(valores);
   } catch (err) {
     Logger.log("Erro ao processar arquivo de crédito: " + err);
     return _fail("Erro ao processar arquivo: " + err.toString());
   }
+}
+
+/**
+ * Grava uma matriz (de CSV ou XLSX) na aba BaseCredito, detectando o layout:
+ * cabeçalhos nomeados OU posições fixas do export SICOR/CACR.
+ */
+function _gravarCreditoMatriz(valores) {
+  const headers = ["nr_cpf_cnpj", "ano_safra", "produto", "atividade", "if_fin", "valor_financiado", "aliquota_proagro", "valor_tomado"];
+  SHEET_BASE_CREDITO.clear();
+  SHEET_BASE_CREDITO.getRange(1, 1, 1, headers.length).setValues([headers]);
+  SHEET_BASE_CREDITO.getRange(1, 1, 1, headers.length).setFontWeight("bold").setBackground("#005c46").setFontColor("white");
+
+  if (!valores || valores.length < 2) {
+    return _ok({ registros: 0, atualizado: new Date().toLocaleString('pt-BR') });
+  }
+
+  const H = valores[0].map(function (h) { return String(h || "").trim().toLowerCase(); });
+  const acha = function (nomes) { for (let i = 0; i < nomes.length; i++) { const p = H.indexOf(nomes[i]); if (p !== -1) return p; } return -1; };
+  const cpfIdx = acha(["nr_cpf_cnpj", "cpf_cnpj", "cpf", "cnpj"]);
+  const usarNomes = cpfIdx !== -1;
+
+  // Posições fixas (base 0) do layout SICOR/CACR
+  const P = { cpf: 22, safra: 2, produto: 6, atividade: 18, ifFin: 10, valFin: 3, aliq: 27 };
+
+  const rows = [];
+  for (let r = 1; r < valores.length; r++) {
+    const row = valores[r];
+    if (!row || row.length === 0) continue;
+
+    let cpf, safra, produto, atividade, ifFin, valFin, aliq;
+    if (usarNomes) {
+      const g = function (nomes, def) { const p = acha(nomes); return p !== -1 ? row[p] : def; };
+      cpf = String(g(["nr_cpf_cnpj", "cpf_cnpj", "cpf", "cnpj"], "") || "").trim();
+      safra = String(g(["ano_safra", "safra"], "") || "").trim();
+      produto = String(g(["produto", "linha", "finalidade"], "") || "").trim();
+      atividade = String(g(["atividade", "cultura"], "") || "").trim();
+      ifFin = String(g(["if_fin", "instituicao", "if_financiamento"], "") || "").trim();
+      valFin = _numBR(g(["valor_financiado", "valor"], 0));
+      aliq = _numBR(g(["aliquota_proagro", "proagro", "aliquota"], 0));
+    } else {
+      cpf = String(row[P.cpf] || "").trim();
+      safra = String(row[P.safra] || "").trim();
+      produto = String(row[P.produto] || "").trim();
+      atividade = String(row[P.atividade] || "").trim();
+      ifFin = String(row[P.ifFin] || "").trim();
+      valFin = _numBR(row[P.valFin]);
+      aliq = _numBR(row[P.aliq]);
+    }
+
+    if (!_chaveDoc(cpf)) continue;
+
+    // ProAgro (quando há alíquota) é somado ao valor financiado -> valor tomado
+    const fator = aliq > 0 ? (1 + aliq / 100) : 1;
+    const valTom = valFin * fator;
+
+    rows.push([
+      cpf,
+      safra || "2025/2026",
+      (produto || "CRÉDITO RURAL").toUpperCase(),
+      atividade || "Outros",
+      ifFin || "Cresol",
+      valFin,
+      aliq,
+      valTom
+    ]);
+  }
+
+  if (rows.length > 0) {
+    SHEET_BASE_CREDITO.getRange(2, 1, rows.length, headers.length).setValues(rows);
+  }
+
+  if (rows.length === 0) {
+    return _fail("Nenhuma linha com CPF/CNPJ encontrada. Confira o layout/colunas do arquivo.");
+  }
+  return _ok({ registros: rows.length, atualizado: new Date().toLocaleString('pt-BR') });
 }
 
 // Alias mantido para compatibilidade (usado pelo doPost e versões anteriores).
