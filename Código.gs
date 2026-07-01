@@ -75,7 +75,7 @@ function inicializarSheetConfig() {
     SHEET_CONFIG.getRange(1, 1, 1, 2).setFontWeight("bold").setBackground("#f58220").setFontColor("white");
     SHEET_CONFIG.appendRow(["Link Consulta Crédito (SICOR/CACR)", "https://www.bcb.gov.br/sicor/"]);
     SHEET_CONFIG.appendRow(["Link Pasta Base de Associados", ""]);
-    SHEET_CONFIG.appendRow(["E-mails Administradores", "gestor@cresol.com.br, analista@cresol.com.br"]);
+    SHEET_CONFIG.appendRow(["E-mails Administradores", "jeferson.deimling@cresolsicoper.com.br"]);
     SHEET_CONFIG.appendRow(["Limite Custeio PRONAF", "250000"]);
     SHEET_CONFIG.appendRow(["Limite Custeio PRONAMP", "1500000"]);
   }
@@ -203,7 +203,46 @@ function obterLinkBase() {
 
 function obterEmailsAdmin() {
   const emailsText = obterValorConfig("E-mails Administradores") || "";
-  return emailsText.split(",").map(e => e.trim()).filter(Boolean);
+  return emailsText
+    .split(/[;,\n]+/)
+    .map(function (e) { return e.trim().toLowerCase(); })
+    .filter(Boolean);
+}
+
+// ==================== CONTROLE DE ACESSO (ADMIN) ====================
+
+// Super administradores: sempre têm acesso, mesmo que não estejam na lista
+// da aba Configurações (evita bloqueio acidental do responsável).
+const SUPER_ADMINS = ["jeferson.deimling@cresolsicoper.com.br"];
+
+function usuarioAtualEmail() {
+  try {
+    var e = Session.getActiveUser().getEmail();
+    if (!e) e = Session.getEffectiveUser().getEmail();
+    return (e || "").toLowerCase();
+  } catch (err) {
+    return "";
+  }
+}
+
+/**
+ * Indica se o usuário logado pode acessar as abas administrativas
+ * (Linhas de Crédito e Configurações do Sistema).
+ * - Super admins sempre podem.
+ * - Se a lista de e-mails ainda não foi configurada, libera (config inicial).
+ * - Caso contrário, só os e-mails da lista têm acesso.
+ */
+function usuarioEhAdmin() {
+  const email = usuarioAtualEmail();
+  if (email && SUPER_ADMINS.indexOf(email) !== -1) return true;
+  const lista = obterEmailsAdmin();
+  if (lista.length === 0) return true;
+  return !!email && lista.indexOf(email) !== -1;
+}
+
+/** Retorna e-mail logado e se é admin — usado pelo frontend para exibir abas. */
+function obterInfoUsuario() {
+  return { email: usuarioAtualEmail(), admin: usuarioEhAdmin() };
 }
 
 function obterLimitesEnquadramento() {

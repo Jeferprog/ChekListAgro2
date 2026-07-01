@@ -133,8 +133,9 @@
           console.warn(`Executando mock para o método ${methodName}`);
           setTimeout(() => {
             if (methodName === "obterLinkConsulta") resolve("https://www.bcb.gov.br/sicor/");
+            else if (methodName === "obterInfoUsuario") resolve({ email: "dev@local", admin: true });
             else if (methodName === "obterLinkBase") resolve("https://drive.google.com/drive/folders/exemplo");
-            else if (methodName === "obterEmailsAdmin") resolve(["gestor@cresol.com.br", "analista@cresol.com.br"]);
+            else if (methodName === "obterEmailsAdmin") resolve(["jeferson.deimling@cresolsicoper.com.br"]);
             else if (methodName === "obterLimitesEnquadramento") resolve({ pronaf: 250000, pronamp: 1500000 });
             else if (methodName === "listarTodasAsLinhas") resolve([
               { id: "L-001", nome: "PRONAF CUSTEIO AGRÍCOLA - Faixa I", orgao: "Cresol / BNDES", finalidadePrincipal: "Custeio", finalidades: "agricola,custeio", enquadramento: "Sem limite/R$ 500 mil", taxaMin: 3, taxaMax: 4.5, taxaDescricao: "3% a 4.5% a.a.", prazo: 24, carencia: 3, limiteMin: 5000, limiteMax: 250000, requisitos: "DAP ativa", documentos: "(P) RG\n(P) DAP/CAF Ativa", status: "Ativa", observacoes: "", itensFinanciaveis: "Sementes, defensivos", culturas: "MILHO (até 25 mil), SOJA, TRIGO" }
@@ -155,6 +156,8 @@
     // --- COMPONENTE PRINCIPAL ---
     function App() {
       const [currentTab, setCurrentTab] = useState("consulta");
+      const [isAdmin, setIsAdmin] = useState(false);
+      const [userEmail, setUserEmail] = useState("");
       const [loading, setLoading] = useState(false);
       const [loadingText, setLoadingText] = useState("Carregando...");
       const [configs, setConfigs] = useState([]);
@@ -195,9 +198,25 @@
 
       // Carregar dados iniciais
       useEffect(() => {
+        carregarInfoUsuario();
         carregarConfiguracoes();
         carregarLinhas();
       }, []);
+
+      // Perfil do usuário: define se as abas administrativas aparecem
+      const carregarInfoUsuario = async () => {
+        try {
+          const info = await runGas("obterInfoUsuario");
+          const admin = !!(info && info.admin);
+          setIsAdmin(admin);
+          setUserEmail((info && info.email) || "");
+          // Se não é admin e está numa aba administrativa, volta para a consulta
+          if (!admin) setCurrentTab("consulta");
+        } catch (e) {
+          console.error(e);
+          setIsAdmin(false);
+        }
+      };
 
       const carregarConfiguracoes = async () => {
         try {
@@ -798,6 +817,10 @@
         setDocxItems(next);
       };
 
+      // Link do botão "Acessar SICOR (BCB)" vem da configuração salva
+      const linkSicor = ((configs.find(c => c.param === "Link Consulta Crédito (SICOR/CACR)") || {}).valor || "").trim()
+        || "https://www.bcb.gov.br/sicor/";
+
       return (
         <div className="min-h-screen flex flex-col bg-[#f8f9fa] pb-12">
           
@@ -819,7 +842,7 @@
               {/* Botão de Ação Direta do Header */}
               <div className="flex gap-2.5">
                 <button
-                  onClick={() => window.open("https://www.bcb.gov.br/sicor/", "_blank")}
+                  onClick={() => window.open(linkSicor, "_blank")}
                   className="bg-accent-orange text-white text-xs font-bold px-4 py-2.5 rounded hover:bg-opacity-95 transition-all shadow flex items-center gap-1.5"
                 >
                   <IconMapPin />
@@ -850,28 +873,32 @@
                 <IconSearch />
                 <span>Simulador & Consultas</span>
               </button>
-              <button
-                onClick={() => setCurrentTab("linhas")}
-                className={`py-4 px-5 text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${
-                  currentTab === "linhas"
-                    ? "border-accent-orange text-primary-green"
-                    : "border-transparent text-text-gray hover:text-text-dark"
-                }`}
-              >
-                <IconClipboardList />
-                <span>Linhas de Crédito</span>
-              </button>
-              <button
-                onClick={() => setCurrentTab("config")}
-                className={`py-4 px-5 text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${
-                  currentTab === "config"
-                    ? "border-accent-orange text-primary-green"
-                    : "border-transparent text-text-gray hover:text-text-dark"
-                }`}
-              >
-                <IconSettings />
-                <span>Configurações do Sistema</span>
-              </button>
+              {isAdmin && (
+                <button
+                  onClick={() => setCurrentTab("linhas")}
+                  className={`py-4 px-5 text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${
+                    currentTab === "linhas"
+                      ? "border-accent-orange text-primary-green"
+                      : "border-transparent text-text-gray hover:text-text-dark"
+                  }`}
+                >
+                  <IconClipboardList />
+                  <span>Linhas de Crédito</span>
+                </button>
+              )}
+              {isAdmin && (
+                <button
+                  onClick={() => setCurrentTab("config")}
+                  className={`py-4 px-5 text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${
+                    currentTab === "config"
+                      ? "border-accent-orange text-primary-green"
+                      : "border-transparent text-text-gray hover:text-text-dark"
+                  }`}
+                >
+                  <IconSettings />
+                  <span>Configurações do Sistema</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -1207,7 +1234,7 @@
             )}
 
             {/* TAB CONTENT: TABELA DE GERENCIAMENTO DE LINHAS DE CRÉDITO */}
-            {currentTab === "linhas" && (
+            {isAdmin && currentTab === "linhas" && (
               <div className="bg-white p-6 rounded-lg border border-border-gray shadow-xs">
                 
                 {/* SUBHEADER COM AÇÕES */}
@@ -1296,7 +1323,7 @@
             )}
 
             {/* TAB CONTENT: CONFIGURAÇÕES DO SISTEMA */}
-            {currentTab === "config" && (
+            {isAdmin && currentTab === "config" && (
               <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   
@@ -1310,6 +1337,11 @@
                       {configs.map((c, i) => (
                         <div key={i} className="flex flex-col gap-1.5">
                           <label className="text-xs font-bold text-text-dark">{c.param}</label>
+                          {c.param === "E-mails Administradores" && (
+                            <p className="text-[10px] text-text-gray font-light -mt-1">
+                              Perfis com acesso às abas administrativas (Linhas de Crédito e Configurações). Separe vários e-mails por vírgula.
+                            </p>
+                          )}
                           <div className="flex gap-2">
                             <input
                               type="text"
