@@ -292,20 +292,35 @@
             if (n.includes("PRONAMP")) return "pronamp";
             const e = String(enqTexto || "").toLowerCase();
             if (e.includes("sem limite")) return "pronaf";
-            if (e.includes("500 mil") && (e.includes("3.5") || e.includes("3,5") || e.includes("1.5") || e.includes("1,5"))) return "pronamp";
+            if (e.includes("500 mil") && (e.includes("3.5") || e.includes("3,5"))) return "pronamp";
             return "demais";
           };
 
+          // Interpreta "mil" (x1.000) e "mi"/"milhão" (x1.000.000) usando
+          // fronteira de palavra — evita que "mil" seja lido como "mi".
           const helperParseRenda = (texto) => {
             if (!texto) return null;
-            const t = texto.toLowerCase();
+            const t = String(texto).toLowerCase().trim();
             const m = t.match(/([\d.,]+)/);
             if (!m) return null;
             let num = parseFloat(m[1].replace(/\s/g, "").replace(",", "."));
             if (isNaN(num)) return null;
-            if (t.includes("milh") || t.includes("mi")) num *= 1000000;
-            else if (t.includes("mil")) num *= 1000;
+            if (/milh|\bmi\b/.test(t)) num *= 1000000;
+            else if (/\bmil\b/.test(t)) num *= 1000;
             return num;
+          };
+
+          // Parser para o teto por cultura ("(até 25 mil)"): remove pontos de
+          // milhar antes de converter (equivalente ao _parseValorTexto do backend).
+          const helperParseValorTexto = (s) => {
+            const t = String(s || "").toLowerCase();
+            const m = t.match(/([\d.,]+)/);
+            if (!m) return null;
+            let n = parseFloat(m[1].replace(/\./g, "").replace(",", "."));
+            if (isNaN(n)) return null;
+            if (/milh|\bmi\b/.test(t)) n *= 1000000;
+            else if (/\bmil\b/.test(t)) n *= 1000;
+            return n;
           };
 
           const helperValidarRenda = (rendaVal, enqTexto) => {
@@ -340,12 +355,15 @@
           const helperKeywordMatch = (searched, line) => {
             if (!searched) return true;
             const term = searched.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-            if (!term || term.length < 3) return true;
+            if (!term) return true;
             const textToSearch = [
               line.nome, line.finalidadePrincipal, line.finalidades,
               line.itensFinanciaveis, line.culturas, line.documentos, line.observacoes
             ].join(" ").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-            return term.split(/\s+/).some(word => textToSearch.includes(word));
+            // S\u00f3 considera palavras com 3+ letras; basta uma casar (igual ao backend)
+            const words = term.split(/\s+/).filter(w => w.length >= 3);
+            if (words.length === 0) return true;
+            return words.some(word => textToSearch.includes(word));
           };
 
           const helperCapCultura = (productText, culturesText) => {
@@ -353,14 +371,16 @@
             const term = productText.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
             if (term.length < 3) return null;
             const cultures = culturesText.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-            const matchMax = cultures.match(new RegExp(term + "[^,;()]*\\(\\s*ate\\s*([^)]+)\\)"));
+            // Escapa caracteres especiais do termo antes de montar o RegExp
+            const termEsc = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const matchMax = cultures.match(new RegExp(termEsc + "[^,;()]*\\(\\s*ate\\s*([^)]+)\\)"));
             if (matchMax) {
-              const v = helperParseRenda(matchMax[1]);
+              const v = helperParseValorTexto(matchMax[1]);
               if (v) return { tipo: "max", valor: v };
             }
-            const matchMin = cultures.match(new RegExp(term + "[^,;()]*\\(\\s*acima\\s*de\\s*([^)]+)\\)"));
+            const matchMin = cultures.match(new RegExp(termEsc + "[^,;()]*\\(\\s*acima\\s*de\\s*([^)]+)\\)"));
             if (matchMin) {
-              const v = helperParseRenda(matchMin[1]);
+              const v = helperParseValorTexto(matchMin[1]);
               if (v) return { tipo: "min", valor: v };
             }
             return null;

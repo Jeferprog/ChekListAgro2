@@ -277,12 +277,15 @@ function buscarLinhas(parametros) {
           let limiteMax = parseInt(linha[headers.indexOf("Limite Máx (R$)")]) || 0;
           let limiteMin = parseInt(linha[headers.indexOf("Limite Min (R$)")]) || 0;
 
+          let capCulturaValor = 0, capCulturaTipo = "";
           const cap = _capCultura(parametros.produto, culturasTxt);
           if (cap) {
             if (cap.tipo === "max") {
               if (limiteMax === 0 || cap.valor < limiteMax) limiteMax = cap.valor;
+              capCulturaValor = cap.valor; capCulturaTipo = "max";
             } else if (cap.tipo === "min") {
               if (cap.valor > limiteMin) limiteMin = cap.valor;
+              capCulturaValor = cap.valor; capCulturaTipo = "min";
             }
           }
 
@@ -304,7 +307,9 @@ function buscarLinhas(parametros) {
             itensFinanciaveis: linha[headers.indexOf("Itens Financiáveis")] || "",
             culturas: culturasTxt,
             limiteDisponivel: Math.max(0, limiteMax - (parametros.valorTomado || 0)),
-            valorTomado: parametros.valorTomado || 0
+            valorTomado: parametros.valorTomado || 0,
+            capCulturaValor: capCulturaValor,
+            capCulturaTipo: capCulturaTipo
           };
         } catch (e) {
           return null;
