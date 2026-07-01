@@ -764,106 +764,346 @@ function _salvarChecklist(nomeLinha, documentosTexto) {
   return salvarChecklist(nomeLinha, documentosTexto);
 }
 
-// ==================== PROCESSAMENTO DE ARQUIVOS ====================
+// ==================== IMPORTAÇÃO DE LINHAS VIA .docx DA CRESOL ====================
 
-function processarArquivoCresol(arquivoInfo) {
+/**
+ * Recebe o conteúdo do .docx da Cresol (em base64), extrai as linhas de
+ * crédito e grava numa aba temporária (staging). NÃO altera a base ainda —
+ * a confirmação é feita por aplicarAtualizacaoCresol().
+ *
+ * Aceita: (base64, filename) — enviado pelo frontend React — ou um objeto
+ * de formulário { arquivo: Blob } por compatibilidade.
+ */
+function processarArquivoCresol(base64, filename) {
   try {
-    // Itens padrão de demonstração
-    const itens = [
-      { idx: 0, nome: "Pronaf Agroindústria (Faixa II)", rural: true },
-      { idx: 1, nome: "Pronaf Jovem Empreendedor", rural: true },
-      { idx: 2, nome: "RenovAgro Recuperação de Pastagens", rural: true }
-    ];
+    let blob = null;
 
-    return {
-      sucesso: true,
-      total: itens.length,
+    // Caso 1: objeto de formulário { arquivo: Blob }
+    if (base64 && typeof base64 === "object" && base64.arquivo) {
+      blob = base64.arquivo;
+    } else if (typeof base64 === "string" && base64.length > 0) {
+      // Caso 2: string base64 (pode vir como data URL "data:...;base64,XXXX")
+      let b64 = base64;
+      const virg = b64.indexOf(",");
+      if (b64.substring(0, 5) === "data:" && virg !== -1) b64 = b64.substring(virg + 1);
+      const bytes = Utilities.base64Decode(b64);
+      blob = Utilities.newBlob(bytes, "application/zip", filename || "cresol.docx");
+    }
+
+    if (!blob) return _fail("Nenhum arquivo recebido. Selecione o .docx da Cresol.");
+
+    blob.setContentType("application/zip");
+    const arquivos = Utilities.unzip(blob);
+    let docXml = null;
+    for (let i = 0; i < arquivos.length; i++) {
+      if (arquivos[i].getName() === "word/document.xml") {
+        docXml = arquivos[i].getDataAsString("UTF-8");
+        break;
+      }
+    }
+    if (!docXml) return _fail("Arquivo .docx inválido (document.xml não encontrado).");
+
+    // Extrai texto por parágrafo e decodifica entidades XML
+    const texto = docXml
+      .replace(/<\/w:p>/g, "\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&apos;/g, "'");
+    const linhasTxt = texto.split("\n").map(function (s) { return s.trim(); });
+
+    const blocos = _cresolMontarBlocos(linhasTxt);
+    if (blocos.length === 0) {
+      return _fail("Nenhuma linha encontrada no arquivo. Confira se o documento usa o rótulo \"Nome da Linha de Crédito:\".");
+    }
+
+    const rows = [];
+    const itens = [];
+    let idNum = 0;
+    for (let k = 0; k < blocos.length; k++) {
+      const rec = _cresolParseBloco(blocos[k]);
+      if (!rec.nome) continue;
+      idNum++;
+      rows.push(_cresolMapear(rec, idNum));
+      itens.push({ idx: rows.length - 1, nome: rec.nome, rural: _cresolEhRural(rec.nome) });
+    }
+    if (rows.length === 0) return _fail("Nenhuma linha válida encontrada no arquivo.");
+
+    // Grava em staging (não altera a base ainda)
+    const staging = _cresolStagingSheet(true);
+    _cresolEscreverEmSheet(staging, rows);
+
+    return _ok({
+      total: rows.length,
+      qtdRural: itens.filter(function (i) { return i.rural; }).length,
+      qtdNaoRural: itens.filter(function (i) { return !i.rural; }).length,
       itens: itens
-    };
+    });
   } catch (e) {
-    Logger.log("Erro ao processar arquivo Cresol: " + e);
-    return {
-      sucesso: false,
-      erro: "Erro ao processar arquivo: " + e.toString()
-    };
+    Logger.log("Erro em processarArquivoCresol: " + e.toString());
+    return _fail(e.toString());
   }
 }
 
+/**
+ * Aplica as linhas selecionadas do staging na aba Linhas, criando antes um
+ * backup da base atual. Mantém apenas o backup mais recente.
+ */
 function aplicarAtualizacaoCresol(selecionados) {
-  if (!SHEET_LINHAS) return { success: false };
+  try {
+    const staging = SS.getSheetByName("Linhas_Staging");
+    if (!staging) return _fail("Nenhuma atualização pendente. Faça o upload do arquivo primeiro.");
+    const vals = staging.getDataRange().getValues();
+    if (!vals || vals.length <= 1) return _fail("A pré-visualização está vazia. Refaça o upload.");
 
-  const simula = [
-    {
-      nome: "Pronaf Agroindústria (Faixa II)",
-      orgao: "BNDES / Cresol",
-      finalidadePrincipal: "Investimento",
-      finalidades: "infraestrutura,investimento",
-      enquadramento: "Sem limite/R$ 500 mil",
-      taxaMin: 8.0,
-      taxaMax: 8.0,
-      taxaDescricao: "8% a.a.",
-      prazo: 120,
-      carencia: 36,
-      limiteMin: 0,
-      limiteMax: 500000,
-      requisitos: "Construção ou melhoramento de pequenas agroindústrias Pronaf.",
-      documentos: "DAP-Pronaf PJ, RG, CPF dos sócios, projeto de viabilidade.",
-      status: "Ativa",
-      observacoes: "Extraído via DOCX",
-      itensFinanciaveis: "Investimentos em infraestrutura, beneficiamento, processamento de alimentos.",
-      culturas: ""
-    },
-    {
-      nome: "Pronaf Jovem Empreendedor",
-      orgao: "BNDES / Cresol",
-      finalidadePrincipal: "Investimento",
-      finalidades: "investimento",
-      enquadramento: "Sem limite/R$ 500 mil",
-      taxaMin: 3.0,
-      taxaMax: 3.0,
-      taxaDescricao: "3% a.a.",
-      prazo: 120,
-      carencia: 24,
-      limiteMin: 0,
-      limiteMax: 35000,
-      requisitos: "Jovens entre 16 e 29 anos com curso técnico ou capacitação na área.",
-      documentos: "CAF/DAP-Pronaf Jovem, RG, CPF, Certificado de capacitação.",
-      status: "Ativa",
-      observacoes: "Extraído via DOCX",
-      itensFinanciaveis: "Projetos de investimento de jovens agricultores.",
-      culturas: ""
-    },
-    {
-      nome: "RenovAgro Recuperação de Pastagens",
-      orgao: "BNDES / Cresol",
-      finalidadePrincipal: "Investimento",
-      finalidades: "investimento,sustentabilidade",
-      enquadramento: "Conforme análise",
-      taxaMin: 8.5,
-      taxaMax: 8.5,
-      taxaDescricao: "8.5% a.a.",
-      prazo: 144,
-      carencia: 60,
-      limiteMin: 0,
-      limiteMax: 5000000,
-      requisitos: "Análise de solo e recomendação agronômica para recuperação de pastagem degradada.",
-      documentos: "RG, CPF, Certidão da propriedade, laudo agronômico.",
-      status: "Ativa",
-      observacoes: "Extraído via DOCX",
-      itensFinanciaveis: "Calcário, sementes de capim, adubo, cercas, curva de nível.",
-      culturas: "PASTAGEM, FORRAGEIRAS"
+    if (!selecionados || !selecionados.length) {
+      return _fail("Selecione ao menos uma linha para incluir.");
     }
+
+    const headers = vals[0];
+    const dados = vals.slice(1);
+    // Filtra pelos índices escolhidos e re-sequencia os IDs (L001, L002, ...)
+    const escolhidas = [];
+    selecionados.forEach(function (i) {
+      if (i >= 0 && i < dados.length) escolhidas.push(dados[i].slice());
+    });
+    if (escolhidas.length === 0) return _fail("Seleção inválida.");
+    escolhidas.forEach(function (r, i) { r[0] = "L" + ("000" + (i + 1)).slice(-3); });
+
+    // Backup: remove backups antigos e copia a base atual
+    const sheets = SS.getSheets();
+    for (let i = 0; i < sheets.length; i++) {
+      if (sheets[i].getName().indexOf("Linhas_Backup") === 0) SS.deleteSheet(sheets[i]);
+    }
+    const carimbo = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd-MM-yyyy HH:mm");
+    const backup = SHEET_LINHAS.copyTo(SS);
+    backup.setName("Linhas_Backup " + carimbo);
+
+    // Aplica na aba Linhas: cabeçalho + linhas escolhidas
+    SHEET_LINHAS.clear();
+    SHEET_LINHAS.getRange(1, 1, 1, headers.length).setValues([headers]);
+    SHEET_LINHAS.getRange(1, 1, 1, headers.length).setFontWeight("bold").setBackground("#005c46").setFontColor("white");
+    SHEET_LINHAS.getRange(2, 1, escolhidas.length, headers.length).setValues(escolhidas);
+
+    SS.deleteSheet(staging);
+    return _ok({ linhas: escolhidas.length, backup: backup.getName() });
+  } catch (e) {
+    Logger.log("Erro em aplicarAtualizacaoCresol: " + e.toString());
+    return _fail(e.toString());
+  }
+}
+
+/** Descarta a atualização pendente (remove o staging) sem alterar a base. */
+function cancelarAtualizacaoCresol() {
+  try {
+    const staging = SS.getSheetByName("Linhas_Staging");
+    if (staging) SS.deleteSheet(staging);
+    return _ok();
+  } catch (e) {
+    return _fail(e.toString());
+  }
+}
+
+function _cresolStagingSheet(criarSeNao) {
+  let sh = SS.getSheetByName("Linhas_Staging");
+  if (!sh && criarSeNao) sh = SS.insertSheet("Linhas_Staging");
+  return sh;
+}
+
+function _cresolMontarBlocos(linhas) {
+  const idxs = [];
+  for (let i = 0; i < linhas.length; i++) {
+    if (linhas[i].indexOf("Nome da Linha de Crédito:") === 0) idxs.push(i);
+  }
+  const blocos = [];
+  for (let k = 0; k < idxs.length; k++) {
+    const start = idxs[k];
+    const end = (k + 1 < idxs.length) ? idxs[k + 1] : linhas.length;
+    blocos.push(linhas.slice(start, end));
+  }
+  return blocos;
+}
+
+function _cresolFieldAfter(block, label) {
+  for (let i = 0; i < block.length; i++) {
+    if (block[i].indexOf(label) === 0) return block[i].substring(label.length).trim();
+  }
+  return "";
+}
+
+function _cresolSection(block, startLabel, endLabels) {
+  const out = [];
+  let cap = false;
+  for (let i = 0; i < block.length; i++) {
+    const l = block[i];
+    if (!cap && l.indexOf(startLabel) === 0) {
+      cap = true;
+      const rest = l.substring(startLabel.length).trim();
+      if (rest) out.push(rest);
+      continue;
+    }
+    if (cap) {
+      let stop = false;
+      for (let j = 0; j < endLabels.length; j++) { if (l.indexOf(endLabels[j]) === 0) { stop = true; break; } }
+      if (stop) break;
+      if (l.trim()) out.push(l);
+    }
+  }
+  return out;
+}
+
+function _cresolParseBloco(b) {
+  return {
+    nome: _cresolFieldAfter(b, "Nome da Linha de Crédito:"),
+    tipo: _cresolFieldAfter(b, "Tipo de Linha:"),
+    objetivo: _cresolFieldAfter(b, "Objetivo:"),
+    publico: _cresolFieldAfter(b, "Público_resumido:"),
+    sistematica: _cresolFieldAfter(b, "Sistemática:"),
+    taxa: _cresolFieldAfter(b, "Taxa de Juros Anual:"),
+    taxaTexto: _cresolSection(b, "Taxa de Juros Anual:", [
+      "IOF", "Limites e Prazos", "Limite de Crédito", "Percentual de Financiamento",
+      "Prazo", "Condições", "Modalidades", "Normas", "Circular", "Garantias", "Restrições"
+    ]).join(" "),
+    iof: _cresolFieldAfter(b, "IOF Complementar:") || _cresolFieldAfter(b, "IOF:"),
+    limite: _cresolFieldAfter(b, "Limite de Crédito por Beneficiário:"),
+    prazo: _cresolFieldAfter(b, "Prazo Total:"),
+    circular: _cresolFieldAfter(b, "Circular BNDES:"),
+    requisitos: _cresolSection(b, "Requisitos:", ["Tipos:", "Financiamento:"]),
+    financia: _cresolSection(b, "O que financia:", ["Produtos Beneficiados:", "Sistemática:", "Garantias:"]),
+    produtos: _cresolSection(b, "Produtos Beneficiados:", ["Sistemática:", "Taxas e Encargos:", "Garantias:"])
+  };
+}
+
+function _cresolEhRural(nome) {
+  const n = nome.toUpperCase();
+  const exclui = ["FINEP", "FUNGETUR", "PROMOVE SUL", "FUNDO CLIMA", "PROCAPCRED",
+    "INVESTIMENTO EMPRESARIAL", "CRESOL EMPRESARIAL BNDES", "BNDES FINAME (FINAME BK"];
+  for (let i = 0; i < exclui.length; i++) { if (n.indexOf(exclui[i]) !== -1) return false; }
+  return true;
+}
+
+function _cresolNumTaxa(t) {
+  if (!t) return 0;
+  const m = String(t).match(/(\d+(?:[.,]\d+)?)/);
+  if (!m) return 0;
+  const n = parseFloat(m[1].replace(",", "."));
+  return isNaN(n) ? 0 : n;
+}
+
+function _cresolNumLimite(t) {
+  if (!t) return 0;
+  const re = /R\$\s*([\d.]+(?:,\d+)?)/g;
+  let m, max = 0, achou = false;
+  while ((m = re.exec(t))) {
+    const v = m[1].replace(/\./g, "").replace(",", ".");
+    const n = parseInt(parseFloat(v), 10);
+    if (!isNaN(n)) { achou = true; if (n > max) max = n; }
+  }
+  return achou ? max : 0;
+}
+
+function _cresolPrazoMeses(t) {
+  if (!t) return 0;
+  let meses = 0, m;
+  const reAnos = /(\d+)\s*anos?/g;
+  while ((m = reAnos.exec(t))) { const v = parseInt(m[1], 10) * 12; if (v > meses) meses = v; }
+  const reMes = /(\d+)\s*mes/g;
+  while ((m = reMes.exec(t))) { const v = parseInt(m[1], 10); if (v > meses) meses = v; }
+  return meses;
+}
+
+function _cresolEnquadramento(pub, nome) {
+  const p = (pub || "").toUpperCase();
+  const n = nome.toUpperCase();
+  if (p.indexOf("PRONAF") !== -1 || n.indexOf("PRONAF") !== -1) return "Sem limite/R$ 500 mil";
+  if (p.indexOf("PRONAMP") !== -1 || n.indexOf("PRONAMP") !== -1) return "R$ 500 mil/R$ 3.5 mi";
+  return "Conforme análise";
+}
+
+function _cresolTags(nome, tipo, objetivo) {
+  const s = (nome + " " + tipo + " " + objetivo).toLowerCase();
+  const t = {};
+  if (s.indexOf("custeio") !== -1) t["custeio"] = 1;
+  const inv = ["investimento", "tratores", "colheitadeira", "máquina", "maquina", "finame", "moderfrota", "inovagro", "agroind", "habita", "bioeconomia", "pca", "prodecoop", "irriga", "renovagro"];
+  for (let i = 0; i < inv.length; i++) { if (s.indexOf(inv[i]) !== -1) { t["investimento"] = 1; break; } }
+  if (s.indexOf("pecuár") !== -1 || s.indexOf("pecuar") !== -1) t["pecuaria"] = 1;
+  if (s.indexOf("agrícola") !== -1 || s.indexOf("agricola") !== -1) t["agricola"] = 1;
+  if (s.indexOf("café") !== -1 || s.indexOf("cafe") !== -1 || s.indexOf("funcaf") !== -1) t["cafe"] = 1;
+  if (s.indexOf("irriga") !== -1) t["irrigacao"] = 1;
+  const mec = ["tratores", "colheitadeira", "máquina", "maquina", "moderfrota", "finame"];
+  for (let j = 0; j < mec.length; j++) { if (s.indexOf(mec[j]) !== -1) { t["mecanizacao"] = 1; break; } }
+  if (s.indexOf("pca") !== -1 || s.indexOf("armaz") !== -1) t["armazenagem"] = 1;
+  const sus = ["renovagro", "sustentável", "sustentavel", "agroecolog", "bioeconomia", "ambiental", "clima"];
+  for (let k = 0; k < sus.length; k++) { if (s.indexOf(sus[k]) !== -1) { t["sustentabilidade"] = 1; break; } }
+  if (s.indexOf("agroind") !== -1 || s.indexOf("industrial") !== -1) t["infraestrutura"] = 1;
+  let keys = Object.keys(t);
+  if (keys.length === 0) keys = ["investimento"];
+  keys.sort();
+  return keys.join(",");
+}
+
+function _cresolOrgao(rec) {
+  const src = ((rec.sistematica || "") + " " + (rec.circular || "")).toUpperCase();
+  if (src.indexOf("BNDES") !== -1) return "BNDES / Cresol";
+  if (src.indexOf("FCO") !== -1 || rec.nome.toUpperCase().indexOf("FCO") !== -1) return "FCO / Cresol";
+  if (src.indexOf("POUPAN") !== -1) return "Cresol (Poupança Rural)";
+  return "Cresol";
+}
+
+function _cresolDocumentos(pub) {
+  if ((pub || "").toUpperCase().indexOf("PRONAF") !== -1) return "CAF/DAP-Pronaf, RG, CPF, projeto técnico, comprovante de renda";
+  return "RG, CPF, documentação da propriedade, projeto técnico, comprovantes de renda";
+}
+
+function _cresolObs(rec) {
+  const p = [];
+  if (rec.objetivo) p.push(rec.objetivo);
+  if (rec.sistematica) p.push("Sistemática: " + rec.sistematica);
+  if (rec.iof) p.push("IOF: " + rec.iof);
+  if (rec.prazo) p.push("Prazo: " + rec.prazo);
+  if (rec.circular) p.push("Norma: " + rec.circular);
+  return p.join(" | ").substring(0, 600);
+}
+
+function _cresolMapear(rec, idNum) {
+  const rid = "L" + ("000" + idNum).slice(-3);
+  const status = (rec.nome.toLowerCase().indexOf("fechado") !== -1) ? "Inativa" : "Ativa";
+  const taxa = _cresolNumTaxa(rec.taxa);
+  return [
+    rid, rec.nome, _cresolOrgao(rec),
+    (rec.objetivo || rec.tipo || "Crédito rural"),
+    _cresolTags(rec.nome, rec.tipo, rec.objetivo),
+    _cresolEnquadramento(rec.publico, rec.nome),
+    taxa, taxa,
+    _cresolPrazoMeses(rec.prazo), 0,
+    0, _cresolNumLimite(rec.limite),
+    (rec.requisitos.join("; ")).substring(0, 600) || "Conforme política de crédito da Cresol",
+    _cresolDocumentos(rec.publico),
+    status, new Date(), _cresolObs(rec),
+    (rec.financia.join("; ")).substring(0, 900),
+    (rec.produtos.join(", ")).substring(0, 1500),
+    String(rec.taxaTexto || rec.taxa || "").substring(0, 800)
   ];
+}
 
-  let count = 0;
-  selecionados.forEach(idx => {
-    if (simula[idx]) {
-      adicionarLinha(simula[idx]);
-      count++;
-    }
-  });
-
-  return { success: true, linhas: count };
+function _cresolEscreverEmSheet(sheet, rows) {
+  const headers = [
+    "ID", "Nome Linha", "Órgão/Instituição", "Finalidade Principal",
+    "Finalidades (tags)", "Enquadramento (Renda Min/Max)", "Taxa Mín (%)",
+    "Taxa Máx (%)", "Prazo (meses)", "Carência (meses)", "Limite Min (R$)",
+    "Limite Máx (R$)", "Requisitos", "Documentos Necessários",
+    "Status (Ativa/Inativa)", "Data Atualização", "Observações",
+    "Itens Financiáveis", "Culturas Financiadas", "Taxa (descrição)"
+  ];
+  sheet.clear();
+  sheet.appendRow(headers);
+  sheet.getRange(1, 1, 1, headers.length).setFontWeight("bold").setBackground("#005c46").setFontColor("white");
+  if (rows.length) {
+    sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+  }
 }
 
 function obterIdDoDrive(link) {
