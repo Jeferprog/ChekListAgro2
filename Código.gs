@@ -25,9 +25,9 @@ function inicializarSistema() {
   Logger.log("✓ Sistema inicializado com sucesso");
 }
 
-// Manter compatibilidade com código anterior
 function inicializarPlanilha() {
   inicializarSistema();
+}
 
 function inicializarSheetLinhas() {
   if (SHEET_LINHAS.getLastRow() === 0) {
@@ -44,7 +44,6 @@ function inicializarSheetLinhas() {
     SHEET_LINHAS.getRange(1, 1, 1, headers.length).setFontWeight("bold").setBackground("#005c46");
     SHEET_LINHAS.getRange(1, 1, 1, headers.length).setFontColor("white");
 
-    // Linha de exemplo
     SHEET_LINHAS.appendRow([
       "L001",
       "PRONAF CUSTEIO AGRÍCOLA Faixa I",
@@ -96,8 +95,9 @@ function inicializarSheetBase() {
     SHEET_BASE.appendRow(cabecalhos);
     SHEET_BASE.getRange(1, 1, 1, cabecalhos.length).setFontWeight("bold").setBackground("#005c46").setFontColor("white");
 
-    SHEET_BASE.appendRow(["12345678909", "12345-6", "JEFERSON OLIVEIRA DA SILVA", "Física", 350000]);
-    SHEET_BASE.appendRow(["98765432100", "54321-0", "MARIA SOUZA REIS", "Física", 1200000]);
+    // vl_anual_fonte_renda_total guarda a renda MENSAL (apesar do nome)
+    SHEET_BASE.appendRow(["12345678909", "12345-6", "JEFERSON OLIVEIRA DA SILVA", "Física", 29000]);
+    SHEET_BASE.appendRow(["98765432100", "54321-0", "MARIA SOUZA REIS", "Física", 100000]);
   }
 }
 
@@ -118,13 +118,54 @@ function inicializarSheetChecklist() {
   }
 }
 
-// Handler principal para servir a aplicação web
+// ==================== HANDLER WEB ====================
+
 function doGet() {
   inicializarPlanilha();
-  return HtmlService.createHtmlOutputFromFile("index")
+  return HtmlService.createHtmlOutputFromFile("Index")
     .setTitle("Cresol Crédito Rural")
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
     .addMetaTag("viewport", "width=device-width, initial-scale=1");
+}
+
+function doPost(e) {
+  try {
+    const file = e.parameter.arquivo || e.parameter.file;
+    if (!file) {
+      return ContentService.createTextOutput(JSON.stringify({
+        sucesso: false,
+        erro: "Nenhum arquivo enviado"
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    const blob = e.parameter[file];
+    if (!blob) {
+      return ContentService.createTextOutput(JSON.stringify({
+        sucesso: false,
+        erro: "Arquivo não encontrado no envio"
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    const filename = blob.getName ? blob.getName() : (file || "arquivo");
+    const content = blob.getDataAsString ? blob.getDataAsString() : String(blob);
+
+    let result;
+    if (filename.toLowerCase().endsWith(".docx")) {
+      result = processarArquivoCresol({ nome: filename, conteudo: content });
+    } else if (filename.toLowerCase().endsWith(".xlsx") || filename.toLowerCase().endsWith(".csv")) {
+      result = processarArquivoCreditoBase({ nome: filename, conteudo: content });
+    } else {
+      result = { sucesso: false, erro: "Tipo de arquivo não suportado" };
+    }
+
+    return ContentService.createTextOutput(JSON.stringify(result))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({
+      sucesso: false,
+      erro: err.toString()
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
 }
 
 // ==================== CONFIGURAÇÕES (LEITURA & ESCRITA) ====================
@@ -192,6 +233,295 @@ function salvarLimitesEnquadramento(pronaf, pronamp) {
   return { success: true };
 }
 
+// ==================== MOTOR DE BUSCA E REGRAS ====================
+
+function buscarLinhas(parametros) {
+  try {
+    const dados = SHEET_LINHAS.getDataRange().getValues();
+    if (!dados || dados.length <= 1) return [];
+
+    const headers = dados[0];
+    const linhas = dados.slice(1);
+
+    const resultado = linhas
+      .filter(linha => {
+        try {
+          const statusIdx = headers.indexOf("Status (Ativa/Inativa)");
+          if (statusIdx === -1 || linha[statusIdx] !== "Ativa") return false;
+
+          const enquadramentoIdx = headers.indexOf("Enquadramento (Renda Min/Max)");
+          if (enquadramentoIdx === -1) return false;
+
+          if (parametros.enquadramento) {
+            const grupoLinha = _grupoEnquadramentoLinha(linha[headers.indexOf("Nome Linha")], linha[enquadramentoIdx]);
+            if (grupoLinha !== _grupoAssociado(parametros.enquadramento)) return false;
+          }
+
+          if (!validarRenda(parametros.renda, linha[enquadramentoIdx])) return false;
+
+          const finalidadesIdx = headers.indexOf("Finalidades (tags)");
+          if (finalidadesIdx === -1) return false;
+
+          if (!validarFinalidade(parametros.finalidade, linha[finalidadesIdx])) return false;
+
+          if (!validarProduto(parametros.produto, linha, headers)) return false;
+
+          return true;
+        } catch (e) {
+          return false;
+        }
+      })
+      .map(linha => {
+        try {
+          const culturasTxt = linha[headers.indexOf("Culturas Financiadas")] || "";
+          let limiteMax = parseInt(linha[headers.indexOf("Limite Máx (R$)")]) || 0;
+          let limiteMin = parseInt(linha[headers.indexOf("Limite Min (R$)")]) || 0;
+
+          const cap = _capCultura(parametros.produto, culturasTxt);
+          if (cap) {
+            if (cap.tipo === "max") {
+              if (limiteMax === 0 || cap.valor < limiteMax) limiteMax = cap.valor;
+            } else if (cap.tipo === "min") {
+              if (cap.valor > limiteMin) limiteMin = cap.valor;
+            }
+          }
+
+          return {
+            id: linha[headers.indexOf("ID")] || "",
+            nome: linha[headers.indexOf("Nome Linha")] || "Sem nome",
+            orgao: linha[headers.indexOf("Órgão/Instituição")] || "",
+            finalidade: linha[headers.indexOf("Finalidade Principal")] || "",
+            taxaMin: parseFloat(linha[headers.indexOf("Taxa Mín (%)")]) || 0,
+            taxaMax: parseFloat(linha[headers.indexOf("Taxa Máx (%)")]) || 0,
+            taxaDescricao: linha[headers.indexOf("Taxa (descrição)")] || "",
+            prazo: parseInt(linha[headers.indexOf("Prazo (meses)")]) || 0,
+            carencia: parseInt(linha[headers.indexOf("Carência (meses)")]) || 0,
+            limiteMin: limiteMin,
+            limiteMax: limiteMax,
+            requisitos: linha[headers.indexOf("Requisitos")] || "",
+            documentos: linha[headers.indexOf("Documentos Necessários")] || "",
+            observacoes: linha[headers.indexOf("Observações")] || "",
+            itensFinanciaveis: linha[headers.indexOf("Itens Financiáveis")] || "",
+            culturas: culturasTxt,
+            limiteDisponivel: Math.max(0, limiteMax - (parametros.valorTomado || 0)),
+            valorTomado: parametros.valorTomado || 0
+          };
+        } catch (e) {
+          return null;
+        }
+      })
+      .filter(item => item !== null)
+      .filter(item => {
+        if ((parametros.valorTomado || 0) > 0 && item.limiteMax > 0 && item.limiteDisponivel <= 0) {
+          return false;
+        }
+        return true;
+      });
+
+    registrarConsulta(parametros, resultado.length);
+    return resultado;
+  } catch (e) {
+    Logger.log("Erro em buscarLinhas: " + e);
+    return [];
+  }
+}
+
+function parseValorRenda(parte) {
+  try {
+    if (!parte) return null;
+    const t = String(parte).toLowerCase().trim();
+
+    const m = t.match(/([\d.,]+)/);
+    if (!m) return null;
+
+    let num = parseFloat(m[1].replace(/\s/g, "").replace(",", "."));
+    if (isNaN(num)) return null;
+
+    if (/milh|\bmi\b/.test(t)) {
+      num = num * 1000000;
+    } else if (/\bmil\b/.test(t)) {
+      num = num * 1000;
+    }
+    return num;
+  } catch (e) {
+    return null;
+  }
+}
+
+function validarRenda(renda, enquadramentoTexto) {
+  try {
+    if (!enquadramentoTexto || enquadramentoTexto === "") return true;
+    if (typeof enquadramentoTexto !== "string") return true;
+
+    const t = enquadramentoTexto.toLowerCase();
+
+    if (t.includes("conforme")) return true;
+
+    if (enquadramentoTexto.includes("/")) {
+      const partes = enquadramentoTexto.split("/");
+      const minTexto = partes[0].trim();
+      const maxTexto = partes[1].trim();
+
+      const min = minTexto.toLowerCase().includes("sem limite")
+        ? 0 : (parseValorRenda(minTexto) || 0);
+      const max = maxTexto.toLowerCase().includes("sem limite")
+        ? Infinity : (parseValorRenda(maxTexto) || Infinity);
+
+      return renda >= min && renda <= max;
+    }
+
+    if (t.includes("acima")) {
+      const min = parseValorRenda(enquadramentoTexto);
+      if (min === null) return true;
+      return renda > min;
+    }
+
+    if (t.includes("até") || t.includes("ate")) {
+      const max = parseValorRenda(enquadramentoTexto);
+      if (max === null) return true;
+      return renda <= max;
+    }
+
+    return true;
+  } catch (e) {
+    return true;
+  }
+}
+
+function validarProduto(produtoBuscado, linha, headers) {
+  try {
+    if (!produtoBuscado || typeof produtoBuscado !== "string") return true;
+
+    const normalizar = txt => String(txt || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "");
+
+    const termo = normalizar(produtoBuscado.trim());
+    if (termo === "") return true;
+
+    const camposRelevantes = [
+      "Nome Linha", "Finalidade Principal", "Finalidades (tags)",
+      "Itens Financiáveis", "Culturas Financiadas", "Documentos Necessários", "Observações"
+    ];
+    const textoBusca = normalizar(camposRelevantes
+      .map(c => {
+        const idx = headers.indexOf(c);
+        return idx === -1 ? "" : String(linha[idx] || "");
+      })
+      .join(" "));
+
+    const palavras = termo.split(/\s+/).filter(p => p.length >= 3);
+    if (palavras.length === 0) return true;
+
+    return palavras.some(p => textoBusca.includes(p));
+  } catch (e) {
+    return true;
+  }
+}
+
+function _normalizarTexto(s) {
+  return String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
+function _parseValorTexto(s) {
+  const t = String(s || "").toLowerCase();
+  const m = t.match(/([\d.,]+)/);
+  if (!m) return null;
+  let n = parseFloat(m[1].replace(/\./g, "").replace(",", "."));
+  if (isNaN(n)) return null;
+  if (/milh|\bmi\b/.test(t)) n *= 1000000;
+  else if (/\bmil\b/.test(t)) n *= 1000;
+  return n;
+}
+
+function _capCultura(produtoBuscado, culturasTexto) {
+  try {
+    if (!produtoBuscado || !culturasTexto) return null;
+    const termo = _normalizarTexto(produtoBuscado.trim());
+    if (termo.length < 3) return null;
+    const texto = _normalizarTexto(culturasTexto);
+    const termoEsc = termo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    let m = texto.match(new RegExp(termoEsc + "[^,;()]*\\(\\s*ate\\s*([^)]+)\\)"));
+    if (m) { const v = _parseValorTexto(m[1]); if (v) return { tipo: "max", valor: v }; }
+
+    m = texto.match(new RegExp(termoEsc + "[^,;()]*\\(\\s*acima\\s*de\\s*([^)]+)\\)"));
+    if (m) { const v = _parseValorTexto(m[1]); if (v) return { tipo: "min", valor: v }; }
+
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function _grupoEnquadramentoLinha(nome, enqTexto) {
+  const n = String(nome || "").toUpperCase();
+  if (n.indexOf("PRONAF") !== -1) return "pronaf";
+  if (n.indexOf("PRONAMP") !== -1) return "pronamp";
+  const e = String(enqTexto || "").toLowerCase();
+  if (e.indexOf("sem limite") !== -1) return "pronaf";
+  if (e.indexOf("500 mil") !== -1 && (e.indexOf("3.5") !== -1 || e.indexOf("3,5") !== -1)) return "pronamp";
+  return "demais";
+}
+
+function _grupoAssociado(enquadramento) {
+  if (enquadramento === "pronaf") return "pronaf";
+  if (enquadramento === "pronamp") return "pronamp";
+  return "demais";
+}
+
+function validarFinalidade(finalidadeBuscada, finalidadeLinha) {
+  try {
+    if (!finalidadeBuscada || !finalidadeLinha) return true;
+    if (typeof finalidadeBuscada !== "string" || typeof finalidadeLinha !== "string") return true;
+
+    const tags = finalidadeLinha.toLowerCase().split(",").map(t => t.trim()).filter(t => t);
+    const buscaTermos = finalidadeBuscada.toLowerCase().split(",").map(t => t.trim()).filter(t => t);
+
+    if (tags.length === 0 || buscaTermos.length === 0) return true;
+
+    return buscaTermos.some(termo => tags.some(tag => tag.includes(termo) || termo.includes(tag)));
+  } catch (e) {
+    return true;
+  }
+}
+
+function registrarConsulta(parametros, qtdResultados) {
+  try {
+    if (!SHEET_HISTORICO) return;
+
+    const dataHora = new Date().toLocaleString('pt-BR');
+    const finalidade = parametros.finalidade || "Não especificado";
+    const enquadramento = parametros.enquadramento || "Não especificado";
+    const resultado = `${qtdResultados} linha(s) encontrada(s)`;
+
+    SHEET_HISTORICO.appendRow([
+      dataHora,
+      "Consulta Linha",
+      finalidade,
+      enquadramento,
+      resultado,
+      Session.getActiveUser().getEmail()
+    ]);
+
+    Logger.log("Consulta registrada: " + finalidade + " - " + resultado);
+  } catch (e) {
+    Logger.log("Erro ao registrar consulta: " + e.toString());
+  }
+}
+
+function obterHistorico() {
+  try {
+    const dados = SHEET_HISTORICO.getDataRange().getValues();
+    if (!dados || dados.length <= 1) return [];
+    return dados.slice(1);
+  } catch (e) {
+    Logger.log("Erro ao obter histórico: " + e);
+    return [];
+  }
+}
+
 // ==================== LINHAS DE CRÉDITO ====================
 
 function listarTodasAsLinhas() {
@@ -199,7 +529,6 @@ function listarTodasAsLinhas() {
   const dados = SHEET_LINHAS.getDataRange().getValues();
   if (dados.length <= 1) return [];
 
-  // Carrega checklists customizados
   const checklistLines = [];
   if (SHEET_CHECKLIST) {
     const ckDados = SHEET_CHECKLIST.getDataRange().getValues();
@@ -317,34 +646,50 @@ function ativarDesativarLinha(id, active) {
 
 // ==================== ASSOCIADOS & CRÉDITO TOMADO ====================
 
+/**
+ * Busca um associado na aba Base por conta ou CPF/CNPJ (somente dígitos).
+ * Observação importante: na base oficial, o campo "vl_anual_fonte_renda_total"
+ * contém a renda MENSAL (apesar do nome) — por isso anualizamos (x12).
+ */
 function buscarAssociado(termo) {
-  if (!SHEET_BASE) return { sucesso: false, error: "Aba Base não encontrada." };
+  try {
+    if (!SHEET_BASE) return { sucesso: false, erro: "Aba Base não encontrada." };
+    if (!termo) return { sucesso: false, erro: "Informe a conta ou o CPF/CNPJ." };
+    const alvo = _chaveDoc(termo);
+    if (!alvo) return { sucesso: false, erro: "Informe um número válido." };
 
-  const termoAlvo = String(termo).replace(/\D/g, "").replace(/^0+/, "");
-  if (!termoAlvo) return { sucesso: false, error: "Termo de busca inválido." };
-
-  const dados = SHEET_BASE.getDataRange().getValues();
-  if (dados.length < 2) return { sucesso: false, error: "Base de associados vazia." };
-
-  const H = dados[0];
-  for (let r = 1; r < dados.length; r++) {
-    const cpf = String(dados[r][H.indexOf("nr_cpf_cnpj")]).replace(/\D/g, "").replace(/^0+/, "");
-    const conta = String(dados[r][H.indexOf("nr_conta_corrente")]).replace(/\D/g, "").replace(/^0+/, "");
-
-    if (cpf === termoAlvo || conta === termoAlvo) {
-      const rendaAnual = parseFloat(dados[r][H.indexOf("vl_anual_fonte_renda_total")]) || 0;
-      return {
-        sucesso: true,
-        nome: String(dados[r][H.indexOf("nm_nome")]),
-        cpfCnpj: String(dados[r][H.indexOf("nr_cpf_cnpj")]),
-        conta: String(dados[r][H.indexOf("nr_conta_corrente")]),
-        tipo: String(dados[r][H.indexOf("ds_pessoa_tipo")]),
-        rendaAnual: rendaAnual,
-        rendaMensal: Math.round(rendaAnual / 12)
-      };
+    const dados = SHEET_BASE.getDataRange().getValues();
+    if (!dados || dados.length < 2) {
+      return { sucesso: false, erro: "Base de associados vazia. Atualize a base na aba Administrativo." };
     }
+
+    const H = dados[0].map(function (h) { return String(h).trim(); });
+    const iCpf = H.indexOf("nr_cpf_cnpj");
+    const iConta = H.indexOf("nr_conta_corrente");
+    const iNome = H.indexOf("nm_nome");
+    const iRenda = H.indexOf("vl_anual_fonte_renda_total");
+    const iTipo = H.indexOf("ds_pessoa_tipo");
+
+    for (let r = 1; r < dados.length; r++) {
+      const cpf = iCpf !== -1 ? _chaveDoc(dados[r][iCpf]) : "";
+      const conta = iConta !== -1 ? _chaveDoc(dados[r][iConta]) : "";
+      if ((cpf && cpf === alvo) || (conta && conta === alvo)) {
+        const rendaMensal = iRenda !== -1 ? _numBR(dados[r][iRenda]) : 0;
+        return {
+          sucesso: true,
+          nome: iNome !== -1 ? (dados[r][iNome] || "") : "",
+          cpfCnpj: iCpf !== -1 ? (dados[r][iCpf] || "") : "",
+          conta: iConta !== -1 ? (dados[r][iConta] || "") : "",
+          tipo: iTipo !== -1 ? (dados[r][iTipo] || "") : "",
+          rendaMensal: rendaMensal,
+          rendaAnual: Math.round(rendaMensal * 12)
+        };
+      }
+    }
+    return { sucesso: false, erro: "Associado não encontrado na base." };
+  } catch (e) {
+    return { sucesso: false, erro: e.toString() };
   }
-  return { sucesso: false, error: "Associado não encontrado." };
 }
 
 function buscarCreditoTomado(cpf) {
@@ -393,7 +738,6 @@ function obterChecklistDocs(nomeLinha) {
     }
   }
 
-  // Fallback para documentos padrão cadastrados na linha
   const linhas = listarTodasAsLinhas();
   const linhaMatch = linhas.find(l => l.nome === nomeLinha);
   if (linhaMatch && linhaMatch.documentos) {
@@ -415,25 +759,34 @@ function salvarChecklist(nomeLinha, documentosTexto) {
   return { success: true };
 }
 
-// EXTRATOR DOCX SIMULADO NO BACKEND (ALINHADO COM SISTEMA ORIGINAL)
+// ==================== PROCESSAMENTO DE ARQUIVOS ====================
+
 function processarArquivoCresol(arquivoInfo) {
-  return {
-    success: true,
-    total: 3,
-    itens: [
+  try {
+    // Itens padrão de demonstração
+    const itens = [
       { idx: 0, nome: "Pronaf Agroindústria (Faixa II)", rural: true },
       { idx: 1, nome: "Pronaf Jovem Empreendedor", rural: true },
       { idx: 2, nome: "RenovAgro Recuperação de Pastagens", rural: true }
-    ]
-  };
+    ];
+
+    return {
+      sucesso: true,
+      total: itens.length,
+      itens: itens
+    };
+  } catch (e) {
+    Logger.log("Erro ao processar arquivo Cresol: " + e);
+    return {
+      sucesso: false,
+      erro: "Erro ao processar arquivo: " + e.toString()
+    };
+  }
 }
 
 function aplicarAtualizacaoCresol(selecionados) {
-  const SS = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = SS.getSheetByName("Linhas");
-  if (!sheet) return { success: false };
-  
-  // Criar linhas selecionadas exatamente idênticas ao sistema de desenvolvimento
+  if (!SHEET_LINHAS) return { success: false };
+
   const simula = [
     {
       nome: "Pronaf Agroindústria (Faixa II)",
@@ -496,7 +849,7 @@ function aplicarAtualizacaoCresol(selecionados) {
       culturas: "PASTAGEM, FORRAGEIRAS"
     }
   ];
-  
+
   let count = 0;
   selecionados.forEach(idx => {
     if (simula[idx]) {
@@ -504,194 +857,215 @@ function aplicarAtualizacaoCresol(selecionados) {
       count++;
     }
   });
-  
+
   return { success: true, linhas: count };
 }
 
 function obterIdDoDrive(link) {
   if (!link) return null;
-  // Match folder ID
   var matchFolder = link.match(/\/folders\/([a-zA-Z0-9-_]+)/);
   if (matchFolder) return { type: "folder", id: matchFolder[1] };
-  // Match file ID
   var matchFile = link.match(/\/file\/d\/([a-zA-Z0-9-_]+)/) || link.match(/id=([a-zA-Z0-9-_]+)/);
   if (matchFile) return { type: "file", id: matchFile[1] };
   return null;
 }
 
-function processarECarregarCSVBase(sheet, csvContent) {
-  const headers = ["nr_cpf_cnpj", "nr_conta_corrente", "nm_nome", "ds_pessoa_tipo", "vl_anual_fonte_renda_total"];
-  sheet.clearContents();
-  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-  
-  let delimiter = ",";
-  if (csvContent.indexOf(";") !== -1) {
-    delimiter = ";";
-  }
-  
-  const parsedData = Utilities.parseCsv(csvContent, delimiter);
-  if (parsedData.length <= 1) return 0;
-  
-  const csvHeaders = parsedData[0].map(function(h) { return h.trim().toLowerCase(); });
-  
-  const cpfIdx = csvHeaders.indexOf("nr_cpf_cnpj") !== -1 ? csvHeaders.indexOf("nr_cpf_cnpj") : csvHeaders.indexOf("cpf");
-  const contaIdx = csvHeaders.indexOf("nr_conta_corrente") !== -1 ? csvHeaders.indexOf("nr_conta_corrente") : csvHeaders.indexOf("conta");
-  const nomeIdx = csvHeaders.indexOf("nm_nome") !== -1 ? csvHeaders.indexOf("nm_nome") : csvHeaders.indexOf("nome");
-  const tipoIdx = csvHeaders.indexOf("ds_pessoa_tipo") !== -1 ? csvHeaders.indexOf("ds_pessoa_tipo") : csvHeaders.indexOf("tipo");
-  const rendaIdx = csvHeaders.indexOf("vl_anual_fonte_renda_total") !== -1 ? csvHeaders.indexOf("vl_anual_fonte_renda_total") : csvHeaders.indexOf("renda");
-  
-  var recordsAdded = 0;
-  var rowsToAppend = [];
-  
-  for (var i = 1; i < parsedData.length; i++) {
-    var row = parsedData[i];
-    if (row.length < 2) continue;
-    
-    var cpf = cpfIdx !== -1 ? String(row[cpfIdx]).trim() : "";
-    var conta = contaIdx !== -1 ? String(row[contaIdx]).trim() : "";
-    var nome = nomeIdx !== -1 ? String(row[nomeIdx]).trim().toUpperCase() : "";
-    var tipo = tipoIdx !== -1 ? String(row[tipoIdx]).trim() : "Física";
-    
-    var rendaText = rendaIdx !== -1 ? String(row[rendaIdx]).trim() : "0";
-    rendaText = rendaText.replace(/[R$\s]/g, "").replace(/\./g, "").replace(",", ".");
-    var renda = parseFloat(rendaText) || 0;
-    
-    if (cpf || conta) {
-      rowsToAppend.push([cpf, conta, nome, tipo, renda]);
-      recordsAdded++;
-    }
-  }
-  
-  if (rowsToAppend.length > 0) {
-    sheet.getRange(2, 1, rowsToAppend.length, headers.length).setValues(rowsToAppend);
-  }
-  
-  return recordsAdded;
-}
-
 // ==================== IMPORTAÇÃO DE DADOS ====================
 
+/**
+ * Converte um valor monetário em formato brasileiro para número.
+ * Ex.: "R$ 1.234,56" -> 1234.56 ; "1500" -> 1500.
+ */
+function _numBR(v) {
+  if (v === null || v === undefined || v === "") return 0;
+  if (typeof v === "number") return v;
+  let s = String(v).replace(/[^\d.,\-]/g, "");
+  if (s.indexOf(",") !== -1) s = s.replace(/\./g, "").replace(",", ".");
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+
+/**
+ * Chave de comparação de documento/conta: só dígitos, sem zeros à esquerda.
+ * Resolve o caso da base que perde zeros iniciais de CPF (ex.: digitar
+ * "01234567890" encontra o registro "1234567890").
+ */
+function _chaveDoc(v) {
+  return String(v || "").replace(/\D/g, "").replace(/^0+/, "");
+}
+
+/**
+ * Lê o conteúdo do CSV a partir de um link de PASTA ou ARQUIVO do Google
+ * Drive, de uma URL direta, ou de um ID solto do Drive.
+ */
+function _lerCsvDoLink(link, filename) {
+  // Link de pasta do Drive
+  const mFolder = link.match(/folders\/([a-zA-Z0-9_\-]+)/);
+  if (mFolder) {
+    const folder = DriveApp.getFolderById(mFolder[1]);
+    const it = folder.getFilesByName(filename);
+    if (it.hasNext()) return it.next().getBlob().getDataAsString("UTF-8");
+    const its = folder.getFiles();
+    while (its.hasNext()) {
+      const f = its.next();
+      if (f.getName().toLowerCase().indexOf(".csv") !== -1) return f.getBlob().getDataAsString("UTF-8");
+    }
+    return null;
+  }
+  // Link de arquivo do Drive (/d/<id> ou ?id=<id>)
+  const idm = link.match(/(?:\/d\/|id=)([a-zA-Z0-9_\-]+)/);
+  if (idm) return DriveApp.getFileById(idm[1]).getBlob().getDataAsString("UTF-8");
+  // URL direta
+  if (/^https?:\/\//.test(link)) return UrlFetchApp.fetch(link).getContentText();
+  // Talvez seja só um ID
+  const mId = link.match(/^[a-zA-Z0-9_\-]{20,}$/);
+  if (mId) return DriveApp.getFileById(link).getBlob().getDataAsString("UTF-8");
+  return null;
+}
+
+/**
+ * Grava o conteúdo de um CSV diretamente na aba Base, preservando os
+ * cabeçalhos e colunas originais do arquivo (não força colunas fixas).
+ * Detecta o delimitador pela primeira linha e normaliza a largura das linhas.
+ */
+function _gravarCsvNaBase(conteudo) {
+  if (!conteudo || conteudo.trim() === "") {
+    return { sucesso: false, erro: "CSV vazio ou inválido." };
+  }
+
+  const primeiraLinha = conteudo.split("\n")[0] || "";
+  const delim = (primeiraLinha.split(";").length > primeiraLinha.split(",").length) ? ";" : ",";
+  const dados = Utilities.parseCsv(conteudo, delim);
+  if (!dados || dados.length < 2) return { sucesso: false, erro: "CSV vazio ou inválido." };
+
+  // Normaliza a largura das linhas (todas com o mesmo nº de colunas do cabeçalho)
+  const largura = dados[0].length;
+  const norm = dados.map(function (r) {
+    const linha = r.slice(0, largura);
+    while (linha.length < largura) linha.push("");
+    return linha;
+  });
+
+  SHEET_BASE.clear();
+  SHEET_BASE.getRange(1, 1, norm.length, largura).setValues(norm);
+  SHEET_BASE.getRange(1, 1, 1, largura).setFontWeight("bold").setBackground("#005c46").setFontColor("white");
+
+  return { sucesso: true, registros: norm.length - 1, atualizado: new Date().toLocaleString("pt-BR") };
+}
+
+/**
+ * Busca o basedepessoas.csv no link configurado e regrava a aba Base.
+ * Também é chamada pelo trigger automático de atualização diária.
+ */
 function atualizarBaseAssociados() {
-  if (!SHEET_BASE) return { success: false, error: "Aba Base não encontrada." };
+  try {
+    if (!SHEET_BASE) return { sucesso: false, erro: "Aba Base não encontrada." };
 
-  const linkBase = obterValorConfig("Link Pasta Base de Associados");
-  if (!linkBase) {
-    return { success: false, error: "Link da Pasta Base de Associados não configurado nas Configurações." };
-  }
+    const link = obterLinkBase();
+    if (!link) return { sucesso: false, erro: "Configure o link da pasta/arquivo da base na aba Administrativo." };
 
-  const driveInfo = obterIdDoDrive(linkBase);
-  if (!driveInfo) {
-    return { success: false, error: "Link de pasta inválido. Por favor, insira um link válido do Google Drive." };
+    const conteudo = _lerCsvDoLink(link, "basedepessoas.csv");
+    if (!conteudo) return { sucesso: false, erro: "Arquivo basedepessoas.csv não encontrado no link informado." };
+
+    return _gravarCsvNaBase(conteudo);
+  } catch (e) {
+    Logger.log("Erro em atualizarBaseAssociados: " + e.toString());
+    return { sucesso: false, erro: e.toString() };
   }
+}
+
+function processarArquivoCreditoBase(arquivoInfo) {
+  if (!SHEET_BASE_CREDITO) return { sucesso: false, error: "Aba BaseCredito não encontrada." };
 
   try {
-    var file;
-    if (driveInfo.type === "file") {
-      file = DriveApp.getFileById(driveInfo.id);
-    } else {
-      var folder = DriveApp.getFolderById(driveInfo.id);
-      var files = folder.getFiles();
-      while (files.hasNext()) {
-        var f = files.next();
-        var fName = f.getName().toLowerCase();
-        if (fName.includes("basedepessoas") || fName.endsWith(".csv")) {
-          file = f;
-          break;
-        }
+    const contentText = arquivoInfo.conteudo || arquivoInfo;
+    if (!contentText) {
+      return { sucesso: false, erro: "Arquivo vazio" };
+    }
+
+    const headers = ["nr_cpf_cnpj", "ano_safra", "produto", "atividade", "if_fin", "valor_financiado", "aliquota_proagro", "valor_tomado"];
+    SHEET_BASE_CREDITO.clearContents();
+    SHEET_BASE_CREDITO.getRange(1, 1, 1, headers.length).setValues([headers]);
+
+    // Detectar delimitador
+    var delimiter = ",";
+    if (contentText.indexOf(";") > -1) {
+      delimiter = ";";
+    }
+
+    // Fazer parse do CSV com tratamento de erro
+    var parsedData;
+    try {
+      parsedData = Utilities.parseCsv(contentText, delimiter);
+    } catch (e) {
+      // Se falhar, tentar com outro delimitador
+      delimiter = delimiter === "," ? ";" : ",";
+      parsedData = Utilities.parseCsv(contentText, delimiter);
+    }
+
+    if (!parsedData || parsedData.length <= 1) {
+      return { sucesso: true, registros: 0, atualizado: new Date().toLocaleString('pt-BR') };
+    }
+
+    var csvHeaders = parsedData[0].map(function(h) { return String(h || "").trim().toLowerCase(); });
+
+    const cpfIdx = csvHeaders.indexOf("nr_cpf_cnpj") !== -1 ? csvHeaders.indexOf("nr_cpf_cnpj") : csvHeaders.indexOf("cpf");
+    const safraIdx = csvHeaders.indexOf("ano_safra") !== -1 ? csvHeaders.indexOf("ano_safra") : csvHeaders.indexOf("safra");
+    const produtoIdx = csvHeaders.indexOf("produto") !== -1 ? csvHeaders.indexOf("produto") : csvHeaders.indexOf("linha");
+    const atividadeIdx = csvHeaders.indexOf("atividade") !== -1 ? csvHeaders.indexOf("atividade") : csvHeaders.indexOf("cultura");
+    const ifIdx = csvHeaders.indexOf("if_fin") !== -1 ? csvHeaders.indexOf("if_fin") : csvHeaders.indexOf("instituicao");
+    const valorFinIdx = csvHeaders.indexOf("valor_financiado") !== -1 ? csvHeaders.indexOf("valor_financiado") : csvHeaders.indexOf("valor");
+    const proagroIdx = csvHeaders.indexOf("aliquota_proagro") !== -1 ? csvHeaders.indexOf("aliquota_proagro") : csvHeaders.indexOf("proagro");
+    const valorTomIdx = csvHeaders.indexOf("valor_tomado") !== -1 ? csvHeaders.indexOf("valor_tomado") : csvHeaders.indexOf("tomado");
+
+    var count = 0;
+    var rowsToAppend = [];
+
+    for (var i = 1; i < parsedData.length; i++) {
+      var row = parsedData[i];
+      if (!row || row.length < 2) continue;
+
+      var cpf = cpfIdx !== -1 ? String(row[cpfIdx] || "").trim() : "";
+      var safra = safraIdx !== -1 ? String(row[safraIdx] || "").trim() : "2025/2026";
+      var produto = produtoIdx !== -1 ? String(row[produtoIdx] || "").trim().toUpperCase() : "CRÉDITO RURAL";
+      var atividade = atividadeIdx !== -1 ? String(row[atividadeIdx] || "").trim() : "Outros";
+      var ifFin = ifIdx !== -1 ? String(row[ifIdx] || "").trim() : "Cresol";
+
+      var valFinText = valorFinIdx !== -1 ? String(row[valorFinIdx] || "0").trim() : "0";
+      valFinText = valFinText.replace(/[R$\s]/g, "").replace(/\./g, "").replace(",", ".");
+      var valFin = parseFloat(valFinText) || 0;
+
+      var aliquotaText = proagroIdx !== -1 ? String(row[proagroIdx] || "0").trim() : "0";
+      aliquotaText = aliquotaText.replace(/[%\s]/g, "").replace(",", ".");
+      var aliquota = parseFloat(aliquotaText) || 0;
+
+      var valTomText = valorTomIdx !== -1 ? String(row[valorTomIdx] || valFin).trim() : String(valFin);
+      valTomText = valTomText.replace(/[R$\s]/g, "").replace(/\./g, "").replace(",", ".");
+      var valTom = parseFloat(valTomText) || valFin;
+
+      if (cpf) {
+        rowsToAppend.push([cpf, safra, produto, atividade, ifFin, valFin, aliquota, valTom]);
+        count++;
       }
     }
 
-    if (!file) {
-      return { success: false, error: "Nenhum arquivo 'basedepessoas.csv' ou arquivo .csv correspondente encontrado na pasta do Drive." };
+    if (rowsToAppend.length > 0) {
+      SHEET_BASE_CREDITO.getRange(2, 1, rowsToAppend.length, headers.length).setValues(rowsToAppend);
     }
 
-    var contentText = file.getBlob().getDataAsString("UTF-8");
-    if (contentText.indexOf("") !== -1 || contentText.indexOf("") !== -1) {
-      contentText = file.getBlob().getDataAsString("ISO-8859-1");
-    }
-
-    var numLines = processarECarregarCSVBase(SHEET_BASE, contentText);
-    return { success: true, registros: numLines };
-
+    return { sucesso: true, registros: count, atualizado: new Date().toLocaleString('pt-BR') };
   } catch (err) {
-    return { success: false, error: "Erro ao acessar arquivos do Google Drive: " + err.message };
+    Logger.log("Erro ao processar arquivo de crédito: " + err);
+    return { sucesso: false, erro: "Erro ao processar arquivo: " + err.toString() };
   }
-}
-
-function processarArquivoCredito(filename, contentText) {
-  if (!SHEET_BASE_CREDITO) return { success: false, error: "Aba BaseCredito não encontrada." };
-
-  const headers = ["nr_cpf_cnpj", "ano_safra", "produto", "atividade", "if_fin", "valor_financiado", "aliquota_proagro", "valor_tomado"];
-  SHEET_BASE_CREDITO.clearContents();
-  SHEET_BASE_CREDITO.getRange(1, 1, 1, headers.length).setValues([headers]);
-
-  var delimiter = ",";
-  if (contentText.indexOf(";") !== -1) {
-    delimiter = ";";
-  }
-
-  var parsedData = Utilities.parseCsv(contentText, delimiter);
-  if (parsedData.length <= 1) {
-    return { success: true, registros: 0 };
-  }
-
-  var csvHeaders = parsedData[0].map(function(h) { return h.trim().toLowerCase(); });
-
-  const cpfIdx = csvHeaders.indexOf("nr_cpf_cnpj") !== -1 ? csvHeaders.indexOf("nr_cpf_cnpj") : csvHeaders.indexOf("cpf");
-  const safraIdx = csvHeaders.indexOf("ano_safra") !== -1 ? csvHeaders.indexOf("ano_safra") : csvHeaders.indexOf("safra");
-  const produtoIdx = csvHeaders.indexOf("produto") !== -1 ? csvHeaders.indexOf("produto") : csvHeaders.indexOf("linha");
-  const atividadeIdx = csvHeaders.indexOf("atividade") !== -1 ? csvHeaders.indexOf("atividade") : csvHeaders.indexOf("cultura");
-  const ifIdx = csvHeaders.indexOf("if_fin") !== -1 ? csvHeaders.indexOf("if_fin") : csvHeaders.indexOf("instituicao");
-  const valorFinIdx = csvHeaders.indexOf("valor_financiado") !== -1 ? csvHeaders.indexOf("valor_financiado") : csvHeaders.indexOf("valor");
-  const proagroIdx = csvHeaders.indexOf("aliquota_proagro") !== -1 ? csvHeaders.indexOf("aliquota_proagro") : csvHeaders.indexOf("proagro");
-  const valorTomIdx = csvHeaders.indexOf("valor_tomado") !== -1 ? csvHeaders.indexOf("valor_tomado") : csvHeaders.indexOf("tomado");
-
-  var count = 0;
-  var rowsToAppend = [];
-
-  for (var i = 1; i < parsedData.length; i++) {
-    var row = parsedData[i];
-    if (row.length < 2) continue;
-
-    var cpf = cpfIdx !== -1 ? String(row[cpfIdx]).trim() : "";
-    var safra = safraIdx !== -1 ? String(row[safraIdx]).trim() : "2025/2026";
-    var produto = produtoIdx !== -1 ? String(row[produtoIdx]).trim().toUpperCase() : "CRÉDITO RURAL";
-    var atividade = atividadeIdx !== -1 ? String(row[atividadeIdx]).trim() : "Outros";
-    var ifFin = ifIdx !== -1 ? String(row[ifIdx]).trim() : "Cresol";
-
-    var valFinText = valorFinIdx !== -1 ? String(row[valorFinIdx]).trim() : "0";
-    valFinText = valFinText.replace(/[R$\s]/g, "").replace(/\./g, "").replace(",", ".");
-    var valFin = parseFloat(valFinText) || 0;
-
-    var aliquotaText = proagroIdx !== -1 ? String(row[proagroIdx]).trim() : "0";
-    aliquotaText = aliquotaText.replace(/[%\s]/g, "").replace(",", ".");
-    var aliquota = parseFloat(aliquotaText) || 0;
-
-    var valTomText = valorTomIdx !== -1 ? String(row[valorTomIdx]).trim() : String(valFin);
-    valTomText = valTomText.replace(/[R$\s]/g, "").replace(/\./g, "").replace(",", ".");
-    var valTom = parseFloat(valTomText) || valFin;
-
-    if (cpf) {
-      rowsToAppend.push([cpf, safra, produto, atividade, ifFin, valFin, aliquota, valTom]);
-      count++;
-    }
-  }
-
-  if (rowsToAppend.length > 0) {
-    SHEET_BASE_CREDITO.getRange(2, 1, rowsToAppend.length, headers.length).setValues(rowsToAppend);
-  }
-
-  return { success: true, registros: count };
 }
 
 function processarArquivoAssociados(filename, contentText) {
-  if (!SHEET_BASE) return { success: false, error: "Aba Base não encontrada." };
+  if (!SHEET_BASE) return { sucesso: false, erro: "Aba Base não encontrada." };
 
   try {
-    var numLines = processarECarregarCSVBase(SHEET_BASE, contentText);
-    return { success: true, registros: numLines };
+    return _gravarCsvNaBase(contentText);
   } catch (err) {
-    return { success: false, error: "Erro ao processar arquivo de associados: " + err.message };
+    return { sucesso: false, erro: "Erro ao processar arquivo de associados: " + err.toString() };
   }
 }
-
