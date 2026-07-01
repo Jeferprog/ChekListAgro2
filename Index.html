@@ -147,7 +147,7 @@
               sucesso: true, items: [{ anoSafra: "2025/2026", produto: "PRONAF CUSTEIO AGRÍCOLA", atividade: "Milho", ifFin: "Cresol", valorFinanciado: 45000, aliquotaProagro: 3, valorTomado: 46350 }], totalFinanciado: 46350
             });
             else if (methodName === "obterChecklistDocs") resolve(["(P) Extrato DAP", "(P) CAR Recibo", "(F) CETCR", "(F) CCB"]);
-            else if (methodName === "importarChecklists") resolve({ sucesso: true, success: true, linhasAtualizadas: 4, blocos: 1, relatorio: [] });
+            else if (methodName === "importarChecklistLinha") resolve({ sucesso: true, success: true, nome: "PRONAF CUSTEIO AGRÍCOLA Faixa I", qtdP: 10, qtdF: 7, total: 17 });
             else resolve({ success: true });
           }, 600);
         }
@@ -668,33 +668,26 @@
         }
       };
 
-      // IMPORTAR CHECKLISTS (.docx ou .txt) — divide em etapas (P)/(F) por linha
-      const handleImportChecklist = async (e) => {
+      // IMPORTAR CHECKLIST DE UMA LINHA ESPECÍFICA (.xls/.xlsx/.docx/.txt/.csv)
+      // Pega todos os itens (P)/(F) do arquivo e grava na linha escolhida.
+      const handleImportChecklistLinha = async (idLinha, e) => {
         const file = e.target.files?.[0];
         if (!file) return;
         const nome = file.name.toLowerCase();
-        // .xls/.xlsx/.docx são binários -> enviar como base64; .txt/.csv como texto
+        // .xls/.xlsx/.docx são binários -> base64; .txt/.csv como texto
         const ehBinario = /\.(xlsx|xls|docx)$/.test(nome);
         setLoading(true);
-        setLoadingText("Importando checklists...");
+        setLoadingText("Importando checklist da linha...");
         const reader = new FileReader();
         reader.onload = async (event) => {
           try {
-            let conteudo;
-            if (ehBinario) {
-              conteudo = String(event.target.result || "").split(",")[1] || "";
-            } else {
-              conteudo = String(event.target.result || "");
-            }
-            const res = await runGas("importarChecklists", conteudo, file.name);
+            const conteudo = ehBinario
+              ? (String(event.target.result || "").split(",")[1] || "")
+              : String(event.target.result || "");
+            const res = await runGas("importarChecklistLinha", idLinha, conteudo, file.name);
             if (res && (res.sucesso || res.success)) {
-              const naoEnc = (res.relatorio || []).filter(r => r.naoEncontrado);
-              let msg = `✓ Checklists importados! ${res.linhasAtualizadas} linha(s) atualizada(s) em ${res.blocos} bloco(s).`;
-              if (naoEnc.length) {
-                msg += `\n\n⚠️ ${naoEnc.length} título(s) sem linha correspondente:\n` +
-                  naoEnc.map(r => "• " + r.header).join("\n");
-              }
-              alert(msg);
+              alert(`✓ Checklist importado para "${res.nome}".\n` +
+                `${res.qtdP} documento(s) de pré-contratação (P) e ${res.qtdF} de formalização (F).`);
               await carregarLinhas();
             } else {
               alert("✕ " + ((res && (res.erro || res.error)) || "Falha ao importar."));
@@ -1168,6 +1161,8 @@
                               <th className="py-2">Produto</th>
                               <th className="py-2">Atividade</th>
                               <th className="py-2">IF Financeira</th>
+                              <th className="py-2 text-right">Valor Financiado (R$)</th>
+                              <th className="py-2 text-right">Alíq. ProAgro</th>
                               <th className="py-2 text-right">Valor Tomado (R$)</th>
                             </tr>
                           </thead>
@@ -1178,8 +1173,12 @@
                                 <td className="py-2">{h.produto}</td>
                                 <td className="py-2">{h.atividade}</td>
                                 <td className="py-2">{h.ifFin}</td>
+                                <td className="py-2 text-right">
+                                  R$ {Number(h.valorFinanciado || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                </td>
+                                <td className="py-2 text-right">{Number(h.aliquotaProagro || 0).toLocaleString("pt-BR")}%</td>
                                 <td className="py-2 text-right font-bold text-[#dc3545]">
-                                  R$ {h.valorTomado.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                  R$ {Number(h.valorTomado || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                                 </td>
                               </tr>
                             ))}
@@ -1316,21 +1315,6 @@
                       <IconUpload />
                       <span>Importar via DOCX Cresol</span>
                     </button>
-                    <input
-                      type="file"
-                      id="checklistInputGas"
-                      accept=".xls,.xlsx,.docx,.txt,.csv"
-                      onChange={handleImportChecklist}
-                      className="hidden"
-                    />
-                    <button
-                      onClick={() => document.getElementById("checklistInputGas")?.click()}
-                      className="bg-[#0d6efd] text-white text-xs font-bold px-4 py-2.5 rounded hover:bg-opacity-95 transition-all flex items-center gap-1.5 shadow-sm"
-                      title="Importar checklists (.xls, .xlsx, .docx ou .txt) com itens (P) pré-contratação e (F) formalização"
-                    >
-                      <IconCheck />
-                      <span>Importar Checklist</span>
-                    </button>
                     <button
                       onClick={openAddModal}
                       className="bg-accent-orange text-white text-xs font-bold px-4 py-2.5 rounded hover:bg-opacity-95 transition-all flex items-center gap-1.5 shadow-sm"
@@ -1378,12 +1362,26 @@
                             </span>
                           </td>
                           <td className="py-3.5 px-4 text-center">
-                            <div className="flex justify-center gap-2">
+                            <div className="flex justify-center items-center gap-3">
                               <button
                                 onClick={() => openEditModal(l)}
                                 className="text-primary-green hover:underline font-bold text-xs"
                               >
                                 Editar
+                              </button>
+                              <input
+                                type="file"
+                                id={`ckLineInput-${l.id}`}
+                                accept=".xls,.xlsx,.docx,.txt,.csv"
+                                onChange={(e) => handleImportChecklistLinha(l.id, e)}
+                                className="hidden"
+                              />
+                              <button
+                                onClick={() => document.getElementById(`ckLineInput-${l.id}`)?.click()}
+                                className="text-[#0d6efd] hover:underline font-bold text-xs"
+                                title="Importar checklist (.xls, .xlsx, .docx ou .txt) para esta linha"
+                              >
+                                Importar Checklist
                               </button>
                             </div>
                           </td>
@@ -1607,7 +1605,9 @@
                               <th className="py-1.5">Produto</th>
                               <th className="py-1.5">Atividade</th>
                               <th className="py-1.5">IF</th>
-                              <th className="py-1.5 text-right">Valor Tomado (R$)</th>
+                              <th className="py-1.5 text-right">Financiado (R$)</th>
+                              <th className="py-1.5 text-right">ProAgro</th>
+                              <th className="py-1.5 text-right">Tomado (R$)</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1617,6 +1617,10 @@
                                 <td className="py-1.5">{h.produto}</td>
                                 <td className="py-1.5">{h.atividade}</td>
                                 <td className="py-1.5">{h.ifFin}</td>
+                                <td className="py-1.5 text-right">
+                                  R$ {Number(h.valorFinanciado || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                </td>
+                                <td className="py-1.5 text-right">{Number(h.aliquotaProagro || 0).toLocaleString("pt-BR")}%</td>
                                 <td className="py-1.5 text-right font-bold text-[#dc3545]">
                                   R$ {Number(h.valorTomado || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                                 </td>
