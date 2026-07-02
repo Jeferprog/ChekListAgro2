@@ -37,7 +37,7 @@ function inicializarSheetLinhas() {
       "Taxa Máx (%)", "Prazo (meses)", "Carência (meses)", "Limite Min (R$)",
       "Limite Máx (R$)", "Requisitos", "Documentos Necessários",
       "Status (Ativa/Inativa)", "Data Atualização", "Observações",
-      "Itens Financiáveis", "Culturas Financiadas", "Taxa (descrição)"
+      "Itens Financiáveis", "Culturas Financiadas", "Taxa (descrição)", "Tipo Pessoa"
     ];
 
     SHEET_LINHAS.appendRow(headers);
@@ -64,7 +64,8 @@ function inicializarSheetLinhas() {
       "Custeio | Sistemática: DIR/BNDES/POUPANÇA | IOF: 0,38%",
       "Itens de custeio relacionados à atividade agrícola",
       "MILHO (até 25 mil), SOJA, TRIGO, FEIJÃO",
-      "3% a.a."
+      "3% a.a.",
+      ""
     ]);
   }
 }
@@ -584,10 +585,12 @@ function listarTodasAsLinhas() {
   }
 
   const H = dados[0];
+  const iTipoPessoa = H.indexOf("Tipo Pessoa");
   return dados.slice(1).map(function(linha) {
     const nome = String(linha[H.indexOf("Nome Linha")]);
     const documentos = String(linha[H.indexOf("Documentos Necessários")]);
-    const temChecklist = checklistLines.indexOf(nome) !== -1 || documentos.trim() !== "";
+    // "Tem checklist" = existe checklist IMPORTADO (aba ChecklistDocs)
+    const temChecklist = checklistLines.indexOf(nome) !== -1;
 
     return {
       id: String(linha[H.indexOf("ID")]),
@@ -609,6 +612,7 @@ function listarTodasAsLinhas() {
       observacoes: String(linha[H.indexOf("Observações")]),
       itensFinanciaveis: String(linha[H.indexOf("Itens Financiáveis")]),
       culturas: String(linha[H.indexOf("Culturas Financiadas")]),
+      tipoPessoa: iTipoPessoa === -1 ? "" : String(linha[iTipoPessoa] || "").trim().toUpperCase(),
       temChecklist: temChecklist
     };
   });
@@ -1249,10 +1253,30 @@ function _cresolParseBloco(b) {
     limite: _cresolFieldAfter(b, "Limite de Crédito por Beneficiário:"),
     prazo: _cresolFieldAfter(b, "Prazo Total:"),
     circular: _cresolFieldAfter(b, "Circular BNDES:"),
+    tipos: _cresolSection(b, "Tipos:", [
+      "Financiamento:", "Requisitos:", "O que financia:", "Produtos Beneficiados:",
+      "Sistemática:", "Garantias:", "Taxa", "IOF", "Limite", "Prazo", "Modalidades", "Normas", "Circular"
+    ]).join(" "),
     requisitos: _cresolSection(b, "Requisitos:", ["Tipos:", "Financiamento:"]),
     financia: _cresolSection(b, "O que financia:", ["Produtos Beneficiados:", "Sistemática:", "Garantias:"]),
     produtos: _cresolSection(b, "Produtos Beneficiados:", ["Sistemática:", "Taxas e Encargos:", "Garantias:"])
   };
+}
+
+/**
+ * Classifica a quem a linha se destina a partir do campo "Tipos:" do DOCX.
+ * Retorna "PF" (só física), "PJ" (só jurídica), "PF/PJ" (ambas) ou "" (não
+ * especificado — não restringe a busca).
+ */
+function _cresolTipoPessoa(tiposTxt) {
+  const s = _ckNorm(tiposTxt);
+  if (!s) return "";
+  const temPF = s.indexOf("pessoa fisica") !== -1 || /\bfisica\b/.test(s) || /\bpf\b/.test(s);
+  const temPJ = s.indexOf("pessoa juridica") !== -1 || /\bjuridica\b/.test(s) || /\bpj\b/.test(s);
+  if (temPF && temPJ) return "PF/PJ";
+  if (temPF) return "PF";
+  if (temPJ) return "PJ";
+  return "";
 }
 
 function _cresolEhRural(nome) {
@@ -1363,7 +1387,8 @@ function _cresolMapear(rec, idNum) {
     status, new Date(), _cresolObs(rec),
     (rec.financia.join("; ")).substring(0, 900),
     (rec.produtos.join(", ")).substring(0, 1500),
-    String(rec.taxaTexto || rec.taxa || "").substring(0, 800)
+    String(rec.taxaTexto || rec.taxa || "").substring(0, 800),
+    _cresolTipoPessoa(rec.tipos)
   ];
 }
 
@@ -1374,7 +1399,7 @@ function _cresolEscreverEmSheet(sheet, rows) {
     "Taxa Máx (%)", "Prazo (meses)", "Carência (meses)", "Limite Min (R$)",
     "Limite Máx (R$)", "Requisitos", "Documentos Necessários",
     "Status (Ativa/Inativa)", "Data Atualização", "Observações",
-    "Itens Financiáveis", "Culturas Financiadas", "Taxa (descrição)"
+    "Itens Financiáveis", "Culturas Financiadas", "Taxa (descrição)", "Tipo Pessoa"
   ];
   sheet.clear();
   sheet.appendRow(headers);
