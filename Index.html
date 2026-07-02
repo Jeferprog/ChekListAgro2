@@ -184,6 +184,7 @@
       const [selectedLine, setSelectedLine] = useState(null);
       const [showChecklistModal, setShowChecklistModal] = useState(false);
       const [checklistLineName, setChecklistLineName] = useState("");
+      const [checklistLine, setChecklistLine] = useState(null);
       const [checklistItems, setChecklistItems] = useState([]);
       const [showDocxParser, setShowDocxParser] = useState(false);
       const [docxItems, setDocxItems] = useState([]);
@@ -627,9 +628,11 @@
         return { text: String(raw || "").trim(), etapa: "", checked: false };
       };
 
-      // VER CHECKLIST DE DOCUMENTOS CUSTOMIZADO
-      const handleOpenChecklist = async (nomeLinha) => {
+      // VER CHECKLIST DE DOCUMENTOS CUSTOMIZADO (recebe a linha completa)
+      const handleOpenChecklist = async (linha) => {
+        const nomeLinha = typeof linha === "string" ? linha : (linha && linha.nome) || "";
         setChecklistLineName(nomeLinha);
+        setChecklistLine(typeof linha === "object" ? linha : null);
         setLoading(true);
         setLoadingText("Carregando checklist...");
         try {
@@ -650,22 +653,91 @@
         setChecklistItems(next);
       };
 
-      // SALVAR CUSTOM CHECKLIST (reconstrói o prefixo (P)/(F))
-      const handleSaveChecklistCustom = async () => {
-        setLoading(true);
-        setLoadingText("Salvando checklist...");
-        try {
-          const text = checklistItems
-            .map(i => (i.etapa ? "(" + i.etapa + ") " : "") + i.text)
-            .join("\n");
-          await runGas("_salvarChecklist", checklistLineName, text);
-          alert("Checklist atualizado com sucesso!");
-        } catch (e) {
-          console.error(e);
-          alert("Erro ao salvar.");
-        } finally {
-          setLoading(false);
-        }
+      // IMPRIMIR O CHECKLIST (associado + resumo da linha + histórico + documentos)
+      const handlePrintChecklist = () => {
+        const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const fmt = (v) => "R$ " + Number(v || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 });
+        const l = checklistLine || {};
+        const a = associadoData;
+
+        let docsHtml = "";
+        [
+          { etapa: "P", titulo: "Pré-Contratação" },
+          { etapa: "F", titulo: "Formalização" },
+          { etapa: "", titulo: "Outros documentos" }
+        ].forEach(g => {
+          const its = checklistItems.filter(it => it.etapa === g.etapa);
+          if (!its.length) return;
+          docsHtml += `<h3>${g.etapa ? "(" + g.etapa + ") " : ""}${g.titulo}</h3><ul>` +
+            its.map(it => `<li><span class="box"></span>${esc(it.text)}</li>`).join("") + `</ul>`;
+        });
+
+        const assocHtml = a ? `<div class="sec"><h2>Dados do Associado</h2><table class="kv">
+            <tr><td>Nome</td><td>${esc(a.nome)}</td></tr>
+            <tr><td>Conta</td><td>${esc(a.conta)}</td></tr>
+            <tr><td>CPF/CNPJ</td><td>${esc(a.cpfCnpj)}</td></tr>
+            <tr><td>Renda Bruta Anual</td><td>${fmt(a.rendaAnual)}</td></tr>
+            <tr><td>Renda Mensal</td><td>${fmt(a.rendaMensal)}</td></tr>
+          </table></div>` : "";
+
+        const lineHtml = `<div class="sec"><h2>Resumo da Linha</h2>
+          ${l.orgao ? `<p class="org">${esc(l.orgao)}</p>` : ""}
+          <table class="kv">
+            <tr><td>Taxas</td><td>${esc(l.taxaDescricao || ((l.taxaMin || 0) + "% a.a."))}</td></tr>
+            <tr><td>Prazo / Carência</td><td>${esc((l.prazo || 0) + " meses (" + (l.carencia || 0) + "m carência)")}</td></tr>
+            <tr><td>Teto Máximo da Linha</td><td>${fmt(l.limiteMax)}</td></tr>
+            <tr><td>Saldo Disponível Estimado</td><td>${fmt(l.limiteDisponivel)}</td></tr>
+            <tr><td>Itens Financiáveis</td><td>${esc(l.itensFinanciaveis || "—")}</td></tr>
+            <tr><td>Requisitos</td><td>${esc(l.requisitos || "—")}</td></tr>
+          </table>
+          ${l.capCulturaValor > 0 ? `<p class="nota">Limite máximo recalculado para ${fmt(l.capCulturaValor)} conforme a cultura informada.</p>` : ""}
+        </div>`;
+
+        const histHtml = (a && creditHistory.length) ? `<div class="sec"><h2>Linhas Ativas Já Contratadas (Histórico SICOR)</h2>
+          <table class="grid"><thead><tr>
+            <th>Safra</th><th>Produto</th><th>Atividade</th><th>IF</th>
+            <th class="r">Financiado</th><th class="r">ProAgro</th><th class="r">Tomado</th>
+          </tr></thead><tbody>` +
+          creditHistory.map(h => `<tr>
+            <td>${esc(h.anoSafra)}</td><td>${esc(h.produto)}</td><td>${esc(h.atividade)}</td><td>${esc(h.ifFin)}</td>
+            <td class="r">${fmt(h.valorFinanciado)}</td><td class="r">${Number(h.aliquotaProagro || 0).toLocaleString("pt-BR")}%</td><td class="r">${fmt(h.valorTomado)}</td>
+          </tr>`).join("") + `</tbody></table></div>` : "";
+
+        const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+          <title>Checklist - ${esc(l.nome || checklistLineName)}</title>
+          <style>
+            body{font-family:Arial,Helvetica,sans-serif;color:#222;margin:24px;font-size:12px;}
+            h1{color:#005c46;font-size:18px;margin:0 0 2px;}
+            .subt{color:#666;font-size:11px;margin:0 0 16px;}
+            h2{color:#005c46;font-size:13px;border-bottom:2px solid #005c46;padding-bottom:3px;margin:18px 0 8px;}
+            h3{color:#004736;font-size:12px;margin:12px 0 4px;}
+            .org{display:inline-block;background:#0d6efd;color:#fff;font-size:10px;font-weight:bold;padding:2px 8px;border-radius:10px;margin:0 0 6px;}
+            table.kv{width:100%;border-collapse:collapse;}
+            table.kv td{padding:3px 6px;vertical-align:top;border-bottom:1px solid #eee;}
+            table.kv td:first-child{color:#666;font-weight:bold;width:200px;text-transform:uppercase;font-size:10px;}
+            table.grid{width:100%;border-collapse:collapse;font-size:11px;}
+            table.grid th{background:#005c46;color:#fff;padding:4px 6px;text-align:left;}
+            table.grid td{padding:4px 6px;border-bottom:1px solid #eee;}
+            .r{text-align:right;}
+            ul{list-style:none;padding:0;margin:0 0 8px;}
+            li{padding:3px 0;border-bottom:1px dashed #ddd;}
+            .box{display:inline-block;width:11px;height:11px;border:1px solid #333;margin-right:8px;vertical-align:middle;}
+            .nota{background:#fff8ee;border-left:3px solid #f58220;padding:6px 8px;font-size:11px;margin-top:6px;}
+            @media print{body{margin:12mm;}}
+          </style></head><body>
+          <h1>Checklist de Documentação — ${esc(l.nome || checklistLineName)}</h1>
+          <p class="subt">Gerado em ${new Date().toLocaleString("pt-BR")}</p>
+          ${assocHtml}${lineHtml}${histHtml}
+          <div class="sec"><h2>Documentos do Checklist</h2>${docsHtml || "<p>Nenhum documento cadastrado.</p>"}</div>
+          </body></html>`;
+
+        const w = window.open("", "_blank");
+        if (!w) { alert("Habilite pop-ups para imprimir o documento."); return; }
+        w.document.open();
+        w.document.write(html);
+        w.document.close();
+        w.focus();
+        setTimeout(() => { w.print(); }, 300);
       };
 
       // IMPORTAR CHECKLIST DE UMA LINHA ESPECÍFICA (.xls/.xlsx/.docx/.txt/.csv)
@@ -1233,7 +1305,7 @@
                                 <h3 className="font-bold text-base text-primary-green mt-1">{l.nome}</h3>
                               </div>
                               <button
-                                onClick={() => handleOpenChecklist(l.nome)}
+                                onClick={() => handleOpenChecklist(l)}
                                 className="bg-accent-orange text-white text-xs font-bold px-3 py-1.5 rounded hover:bg-opacity-95 transition-all flex items-center gap-1.5 shadow-sm"
                               >
                                 <IconCheck />
@@ -1593,6 +1665,45 @@
                     </div>
                   )}
 
+                  {/* RESUMO DA LINHA SELECIONADA */}
+                  {checklistLine && (
+                    <div className="border border-border-gray/50 rounded-lg p-3.5">
+                      <div className="flex items-center gap-2 mb-2">
+                        {checklistLine.orgao && (
+                          <span className="bg-[#0d6efd] text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">{checklistLine.orgao}</span>
+                        )}
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-primary-green">Resumo da Linha</span>
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                        <div>
+                          <span className="text-text-gray block text-[10px] uppercase font-bold">Taxas Aplicadas</span>
+                          <span className="font-bold text-text-dark">{checklistLine.taxaDescricao || `${checklistLine.taxaMin || 0}% a.a.`}</span>
+                        </div>
+                        <div>
+                          <span className="text-text-gray block text-[10px] uppercase font-bold">Prazo / Carência</span>
+                          <span className="font-medium text-text-dark">{checklistLine.prazo || 0} m ({checklistLine.carencia || 0}m carência)</span>
+                        </div>
+                        <div>
+                          <span className="text-text-gray block text-[10px] uppercase font-bold">Teto Máximo</span>
+                          <span className="font-bold text-text-dark">R$ {Number(checklistLine.limiteMax || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                        </div>
+                        <div>
+                          <span className="text-text-gray block text-[10px] uppercase font-bold">Saldo Disponível</span>
+                          <span className="font-bold text-success-green">R$ {Number(checklistLine.limiteDisponivel || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      </div>
+                      {checklistLine.capCulturaValor > 0 && (
+                        <div className="mt-2.5 p-2 bg-amber-50 border border-amber-200 text-[11px] text-amber-800 rounded">
+                          <strong>Nota:</strong> Limite máximo recalculado para <strong>R$ {Number(checklistLine.capCulturaValor).toLocaleString("pt-BR")}</strong> conforme a cultura informada.
+                        </div>
+                      )}
+                      <div className="mt-2.5 text-xs flex flex-col gap-1 text-text-gray bg-slate-50 p-2.5 rounded border border-border-gray/40 font-light">
+                        <div><strong>Itens Financiáveis:</strong> {checklistLine.itensFinanciaveis || "Gerais para a modalidade"}</div>
+                        <div><strong>Requisitos:</strong> {checklistLine.requisitos || "Documentação regular básica"}</div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* HISTÓRICO SICOR (LINHAS JÁ CONTRATADAS) */}
                   {associadoData && creditHistory.length > 0 && (
                     <div className="border border-border-gray/50 rounded-lg p-3.5">
@@ -1679,10 +1790,10 @@
                   </span>
                   <div className="flex gap-2">
                     <button
-                      onClick={handleSaveChecklistCustom}
-                      className="bg-primary-green text-white text-xs font-bold px-3 py-1.5 rounded hover:bg-opacity-95"
+                      onClick={handlePrintChecklist}
+                      className="bg-primary-green text-white text-xs font-bold px-3 py-1.5 rounded hover:bg-opacity-95 flex items-center gap-1.5"
                     >
-                      Salvar Checklist
+                      🖨️ Imprimir Documento
                     </button>
                     <button
                       onClick={() => setShowChecklistModal(false)}
