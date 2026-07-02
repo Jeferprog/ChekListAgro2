@@ -752,8 +752,11 @@ function buscarCreditoTomado(cpf) {
   for (let r = 1; r < dados.length; r++) {
     const rowCpf = String(dados[r][H.indexOf("nr_cpf_cnpj")]).replace(/\D/g, "").replace(/^0+/, "");
     if (rowCpf === cpfAlvo) {
-      const valorFin = parseFloat(dados[r][H.indexOf("valor_financiado")]) || 0;
-      const valorTom = parseFloat(dados[r][H.indexOf("valor_tomado")]) || valorFin;
+      const valorFin = _numBR(dados[r][H.indexOf("valor_financiado")]);
+      const aliq = _numBR(dados[r][H.indexOf("aliquota_proagro")]);
+      // Valor tomado = valor financiado + Alíquota do ProAgro (quando houver).
+      // É o que conta para o limite já utilizado pelo associado.
+      const valorTom = valorFin * (aliq > 0 ? (1 + aliq / 100) : 1);
       totalFinanciado += valorTom;
 
       items.push({
@@ -762,7 +765,7 @@ function buscarCreditoTomado(cpf) {
         atividade: String(dados[r][H.indexOf("atividade")]),
         ifFin: String(dados[r][H.indexOf("if_fin")]),
         valorFinanciado: valorFin,
-        aliquotaProagro: parseFloat(dados[r][H.indexOf("aliquota_proagro")]) || 0,
+        aliquotaProagro: aliq,
         valorTomado: valorTom
       });
     }
@@ -985,6 +988,56 @@ function importarChecklists(conteudo, filename) {
     return _ok({ linhasAtualizadas: totalLinhas, blocos: relatorio.length, relatorio: relatorio });
   } catch (e) {
     Logger.log("Erro em importarChecklists: " + e);
+    return _fail(e.toString());
+  }
+}
+
+/** Retorna o Nome da Linha a partir do ID. */
+function _nomeLinhaPorId(id) {
+  if (!SHEET_LINHAS) return "";
+  const dados = SHEET_LINHAS.getDataRange().getValues();
+  if (dados.length <= 1) return "";
+  const iId = dados[0].indexOf("ID");
+  const iNome = dados[0].indexOf("Nome Linha");
+  for (let r = 1; r < dados.length; r++) {
+    if (String(dados[r][iId]) === String(id)) return String(dados[r][iNome] || "").trim();
+  }
+  return "";
+}
+
+/**
+ * Importa o checklist de UMA linha específica (por ID). Não faz correspondência
+ * por nome: pega TODOS os itens (P)/(F) do arquivo e grava na linha informada.
+ * Útil quando linhas diferentes compartilham o mesmo checklist.
+ */
+function importarChecklistLinha(idLinha, conteudo, filename) {
+  try {
+    if (!SHEET_CHECKLIST) return _fail("Aba ChecklistDocs não encontrada.");
+    const nome = _nomeLinhaPorId(idLinha);
+    if (!nome) return _fail("Linha não encontrada (ID " + idLinha + ").");
+
+    const texto = _extrairTextoChecklist(conteudo, filename);
+    if (!texto || !texto.trim()) return _fail("Não foi possível ler o conteúdo do arquivo.");
+
+    const reItem = /^\(\s*([pfPF])\s*\)\s*(.*)$/;
+    const itens = [];
+    texto.split(/\r?\n/).forEach(function (l) {
+      const s = l.trim();
+      if (!s) return;
+      const m = s.match(reItem);
+      if (m && m[2].trim()) itens.push("(" + m[1].toUpperCase() + ") " + m[2].trim());
+    });
+
+    if (itens.length === 0) {
+      return _fail("Nenhum item (P)/(F) encontrado no arquivo. Confira se os documentos começam com (P) ou (F).");
+    }
+
+    salvarChecklist(nome, itens.join("\n"));
+    const qtdP = itens.filter(function (x) { return /^\(P\)/.test(x); }).length;
+    const qtdF = itens.filter(function (x) { return /^\(F\)/.test(x); }).length;
+    return _ok({ nome: nome, qtdP: qtdP, qtdF: qtdF, total: itens.length });
+  } catch (e) {
+    Logger.log("Erro em importarChecklistLinha: " + e);
     return _fail(e.toString());
   }
 }
