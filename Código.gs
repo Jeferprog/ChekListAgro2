@@ -1730,3 +1730,195 @@ function processarArquivoAssociados(filename, contentText) {
     return _fail("Erro ao processar arquivo de associados: " + err.toString());
   }
 }
+
+/* =========================================================================
+ * AGENTE DE IA — Sugestão da melhor linha de crédito
+ * =======================================================================*/
+
+const IA_PROP_CHAVE = "ANTHROPIC_API_KEY";
+const IA_MODELO = "claude-opus-4-8";
+const IA_ENDPOINT = "https://api.anthropic.com/v1/messages";
+
+// Diretrizes configuradas pela cooperativa para o agente especialista.
+const IA_SYSTEM_INSTRUCTION =
+"Você é o Especialista em Crédito Rural e Agronegócio da Cresol. Seu papel principal é atuar como um arquiteto de soluções financeiras para gerentes de carteira e associados. Seu objetivo absoluto é: diagnosticar a necessidade do produtor, cruzar com as regras de enquadramento vigentes e recomendar a linha de menor custo financeiro (menor taxa de juros) e prazo mais adequado.\n\n" +
+"DIRETRIZES DE COMPORTAMENTO:\n" +
+"- Sempre classifique o produtor (PRONAF, PRONAMP, DEMAIS).\n" +
+"- Identifique se é custeio ou investimento.\n" +
+"- Busque sempre a menor taxa de juros possível para o cenário dele.\n\n" +
+"BASE DE DADOS DE LINHAS DE CRÉDITO:\n" +
+"[CUSTEIO AGRÍCOLA - PRONAF]\n" +
+"- CAF-Pronaf/DAP ativa, área <= 4 módulos fiscais, renda até R$ 500k. Limite: R$ 250k.\n" +
+"* Faixa I (3% a.a.): Alface, feijão, arroz, mandioca, milho (até 25 mil), hortaliças, morango, trigo, banana, abacaxi, batata, tomate.\n" +
+"* Faixa II (6.5% a.a.): Café, cana, pastagem, milho (acima de 25 mil), uva, soja, eucalipto.\n" +
+"* Faixa III (Orgânicos): Taxa 2% a.a.\n" +
+"* Faixa IV (8% a.a.): Soja, algodão, búfalos (carne).\n\n" +
+"[CUSTEIO PECUÁRIO - PRONAF]\n" +
+"* Faixa I (3% a.a.): Apicultura, leite, ovinos.\n" +
+"* Faixa II (6.5% a.a.): Suínos, aves corte.\n" +
+"* Faixa IV (8% a.a.): Bovinos de corte (confinamento até 6 meses, recria até 12 meses, recria/engorda conjunta até 20 meses).\n\n" +
+"[CUSTEIO PRONAMP]\n" +
+"- Renda até R$ 3.5M, min 80% agro. Limite: R$ 1.5M.\n" +
+"* Comum: Taxa 10% a.a.\n" +
+"* Sustentável: Taxa 9.5% a.a.\n\n" +
+"[CUSTEIO DEMAIS PRODUTORES]\n" +
+"- Limite: R$ 3.0M.\n" +
+"* Comum: Taxa 14% a.a.\n" +
+"* Sustentável: Taxa 13.5% a.a.\n\n" +
+"[FUNCAFÉ]\n" +
+"- IOF Isento. Limite: R$ 3M.\n" +
+"* Custeio: Taxa 13% a.a. (Até 20 meses)\n" +
+"* Comercialização: Taxa 13% a.a. (Até 12 meses)\n\n" +
+"[INVESTIMENTOS IMPORTANTES]\n" +
+"* Pronaf Grupo B (0.5% a.a.): Limite R$ 12k. Renda <= R$ 50k.\n" +
+"* Mais Alimentos Máquinas F3 (2.5% a.a.): Limite R$ 100k. Renda < R$ 150k.\n" +
+"* Mais Alimentos F1 (3% a.a.): Limite R$ 250k (ou R$ 450k para suínos/aves/fruticultura).\n" +
+"* Mais Alimentos F2 (8% a.a.): Caminhonetes de carga, matrizes, galpões.\n" +
+"* Pronamp Investimento (10% a.a.): Limite R$ 600k.\n" +
+"* RenovAgro Ambiental / Pastagem (8.5% a.a.): Recuperação ambiental e de pastagem degradada. Limite R$ 5M.\n" +
+"* RenovAgro Demais (10% a.a.): Orgânicos, solos, florestas. Limite R$ 5M.\n" +
+"* PCA Grãos (8.5% a.a.): Armazenagem de grãos até 12 mil toneladas. Limite R$ 50M.\n" +
+"* PCA Demais (10% a.a.): Armazenagem acima de 12 mil toneladas. Limite R$ 50M.\n" +
+"* FCO Rural MS (9.05% a.a.): Exclusivo para Mato Grosso do Sul.\n" +
+"* Bioeconomia Solar (3% a.a.): Sistemas fotovoltaicos, somente via Finame.\n\n" +
+"ORIENTAÇÕES OPERACIONAIS:\n" +
+"- Quando o sistema informar as linhas ELEGÍVEIS já filtradas para este produtor, priorize recomendar entre elas; se nenhuma delas atender bem, explique o motivo e indique a linha da base acima que melhor se aplica.\n" +
+"- Sua resposta é um apoio à decisão do analista, não uma aprovação de crédito. Seja objetivo.\n" +
+"- Responda em português do Brasil, em formato claro: 1) Classificação do produtor; 2) Tipo de operação (custeio/investimento); 3) Linha recomendada e por quê (taxa/prazo); 4) Alternativas, se houver; 5) Ressalvas/documentos a verificar.";
+
+/** Lê a chave da API das Script Properties (nunca fica na planilha nem no código). */
+function _obterChaveIA() {
+  try {
+    const v = PropertiesService.getScriptProperties().getProperty(IA_PROP_CHAVE);
+    return v ? String(v).trim() : "";
+  } catch (e) {
+    return "";
+  }
+}
+
+/** Grava a chave da API nas Script Properties. Chamada apenas por administradores. */
+function salvarChaveIA(chave) {
+  try {
+    if (!usuarioEhAdmin()) return _fail("Apenas administradores podem configurar a chave da IA.");
+    const c = String(chave || "").trim();
+    if (!c) {
+      PropertiesService.getScriptProperties().deleteProperty(IA_PROP_CHAVE);
+      return _ok({ configurada: false, mensagem: "Chave removida." });
+    }
+    PropertiesService.getScriptProperties().setProperty(IA_PROP_CHAVE, c);
+    return _ok({ configurada: true, mensagem: "Chave salva com segurança." });
+  } catch (err) {
+    return _fail("Erro ao salvar chave: " + err.toString());
+  }
+}
+
+/** Informa ao front-end se a IA já está configurada (sem revelar a chave). */
+function iaConfigurada() {
+  return _ok({ configurada: _obterChaveIA() !== "" });
+}
+
+/** Monta o texto do cenário do produtor sem enviar dados pessoais (sem CPF/nome). */
+function _iaMontarCenario(ctx) {
+  ctx = ctx || {};
+  const linhas = [];
+  linhas.push("CENÁRIO DO PRODUTOR:");
+  if (ctx.tipoPessoa) linhas.push("- Tipo de pessoa: " + ctx.tipoPessoa);
+  if (ctx.enquadramento) linhas.push("- Enquadramento: " + ctx.enquadramento);
+  if (ctx.renda !== undefined && ctx.renda !== null && ctx.renda !== "")
+    linhas.push("- Renda bruta anual (R$): " + ctx.renda);
+  if (ctx.finalidade) linhas.push("- Finalidade/necessidade: " + ctx.finalidade);
+  if (ctx.produto) linhas.push("- Produto/atividade: " + ctx.produto);
+  if (ctx.cultura) linhas.push("- Cultura: " + ctx.cultura);
+  if (ctx.valorPretendido !== undefined && ctx.valorPretendido !== null && ctx.valorPretendido !== "")
+    linhas.push("- Valor pretendido (R$): " + ctx.valorPretendido);
+  if (ctx.valorTomado !== undefined && ctx.valorTomado !== null && ctx.valorTomado !== "")
+    linhas.push("- Valor já tomado em outras linhas (R$, inclui ProAgro): " + ctx.valorTomado);
+
+  const elegiveis = Array.isArray(ctx.linhasElegiveis) ? ctx.linhasElegiveis : [];
+  if (elegiveis.length) {
+    linhas.push("");
+    linhas.push("LINHAS ELEGÍVEIS JÁ FILTRADAS PELO SISTEMA PARA ESTE PRODUTOR:");
+    elegiveis.forEach(function (l, i) {
+      const partes = [];
+      if (l.nome) partes.push(l.nome);
+      if (l.orgao) partes.push("órgão: " + l.orgao);
+      if (l.taxa) partes.push("taxa: " + l.taxa);
+      if (l.prazo) partes.push("prazo: " + l.prazo);
+      if (l.teto) partes.push("teto: " + l.teto);
+      if (l.saldoDisponivel !== undefined && l.saldoDisponivel !== null && l.saldoDisponivel !== "")
+        partes.push("saldo disponível: " + l.saldoDisponivel);
+      linhas.push((i + 1) + ") " + partes.join(" | "));
+    });
+  } else {
+    linhas.push("");
+    linhas.push("O sistema não enviou linhas pré-filtradas; use a base de dados das diretrizes.");
+  }
+
+  linhas.push("");
+  linhas.push("Pergunta: qual a melhor linha de crédito (menor custo e prazo adequado) para este produtor?");
+  return linhas.join("\n");
+}
+
+/**
+ * Chama a API da Anthropic para sugerir a melhor linha.
+ * `contexto` deve conter apenas dados não sensíveis (sem CPF/nome).
+ */
+function sugerirMelhorLinhaIA(contexto) {
+  const chave = _obterChaveIA();
+  if (!chave) {
+    return _fail("A IA ainda não foi configurada. Um administrador precisa cadastrar a chave da API na aba Configurações do Sistema.");
+  }
+
+  try {
+    const pergunta = _iaMontarCenario(contexto);
+    const payload = {
+      model: IA_MODELO,
+      max_tokens: 1200,
+      system: IA_SYSTEM_INSTRUCTION,
+      messages: [{ role: "user", content: pergunta }]
+    };
+
+    const resp = UrlFetchApp.fetch(IA_ENDPOINT, {
+      method: "post",
+      contentType: "application/json",
+      headers: { "x-api-key": chave, "anthropic-version": "2023-06-01" },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+
+    const code = resp.getResponseCode();
+    const body = resp.getContentText();
+
+    if (code === 401 || code === 403) {
+      return _fail("Chave da API inválida ou sem permissão (HTTP " + code + "). Verifique a configuração.");
+    }
+    if (code === 429) {
+      return _fail("Limite de uso da IA atingido no momento (HTTP 429). Tente novamente em instantes.");
+    }
+    if (code < 200 || code >= 300) {
+      let detalhe = "";
+      try { const e = JSON.parse(body); detalhe = (e.error && e.error.message) ? (" — " + e.error.message) : ""; } catch (x) {}
+      return _fail("Falha ao consultar a IA (HTTP " + code + ")" + detalhe);
+    }
+
+    const json = JSON.parse(body);
+    if (json.stop_reason === "refusal") {
+      return _fail("A IA não pôde responder a esta solicitação.");
+    }
+
+    let texto = "";
+    if (Array.isArray(json.content)) {
+      for (let i = 0; i < json.content.length; i++) {
+        if (json.content[i] && json.content[i].type === "text") {
+          texto += json.content[i].text;
+        }
+      }
+    }
+    texto = texto.trim();
+    if (!texto) return _fail("A IA retornou uma resposta vazia.");
+
+    return _ok({ recomendacao: texto });
+  } catch (err) {
+    return _fail("Erro ao consultar a IA: " + err.toString());
+  }
+}
