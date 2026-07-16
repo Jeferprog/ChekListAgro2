@@ -104,11 +104,11 @@ function inicializarSheetBase() {
 
 function inicializarSheetCredito() {
   if (SHEET_BASE_CREDITO.getLastRow() === 0) {
-    const cabecalhos = ["nr_cpf_cnpj", "ano_safra", "produto", "atividade", "if_fin", "valor_financiado", "aliquota_proagro", "valor_tomado"];
+    const cabecalhos = ["nr_cpf_cnpj", "ano_safra", "produto", "atividade", "finalidade_recurso", "if_fin", "valor_financiado", "aliquota_proagro", "valor_tomado"];
     SHEET_BASE_CREDITO.appendRow(cabecalhos);
     SHEET_BASE_CREDITO.getRange(1, 1, 1, cabecalhos.length).setFontWeight("bold").setBackground("#005c46").setFontColor("white");
 
-    SHEET_BASE_CREDITO.appendRow(["12345678909", "2025/2026", "PRONAF CUSTEIO AGRÍCOLA", "Milho", "Cresol", 45000, 3, 46350]);
+    SHEET_BASE_CREDITO.appendRow(["12345678909", "2025/2026", "PRONAF CUSTEIO AGRÍCOLA", "Milho", "Custeio", "Cresol", 45000, 3, 46350]);
   }
 }
 
@@ -740,34 +740,100 @@ function buscarAssociado(termo) {
   }
 }
 
+/**
+ * Normaliza o valor da coluna "Finalidade Recurso" do SICOR para
+ * Custeio / Investimento / Comercialização. Retorna "" quando não reconhece
+ * (nesses casos o sistema recorre à classificação por produto/atividade).
+ */
+function _normalizarFinalidadeRecurso(txt) {
+  const s = String(txt || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+  if (!s) return "";
+  if (s.indexOf("custeio") !== -1) return "Custeio";
+  if (s.indexOf("investi") !== -1) return "Investimento";
+  if (s.indexOf("comerci") !== -1) return "Comercialização";
+  // Alguns exports usam códigos: 1=custeio, 2=investimento, 3=comercializacao
+  if (s === "1") return "Custeio";
+  if (s === "2") return "Investimento";
+  if (s === "3") return "Comercialização";
+  return "";
+}
+
+/**
+ * Classifica uma operação do SICOR em Custeio / Investimento / Comercialização.
+ * Prioriza a coluna oficial "Finalidade Recurso" (quando informada) e recorre
+ * ao produto/atividade apenas como fallback. Apenas o CUSTEIO consome o limite
+ * de custeio do enquadramento (PRONAF/PRONAMP); investimento e comercialização
+ * possuem limites próprios e NÃO reduzem o custeio.
+ */
+function _classificarFinalidadeCredito(produto, atividade, finalidadeRecurso) {
+  const oficial = _normalizarFinalidadeRecurso(finalidadeRecurso);
+  if (oficial) return oficial;
+
+  const s = (String(produto || "") + " " + String(atividade || ""))
+    .toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+  const investimento = [
+    "trator", "colheitad", "colhedora", "maquin", "implement", "moderfrota",
+    "finame", "inovagro", "mais aliment", "investimento", "benfeitor", "galp",
+    "armazen", "silo", "resfriad", "ordenha", "caminh", "veicul", "aquisi",
+    "constru", "reforma", "irriga", "renovagro", "pca", "bioeconomia",
+    "energ", "fotovolt", "solar", "matriz"
+  ];
+  for (let i = 0; i < investimento.length; i++) {
+    if (s.indexOf(investimento[i]) !== -1) return "Investimento";
+  }
+
+  const comercial = ["comercial", "estocagem", "desconto", "egf", "amparo"];
+  for (let j = 0; j < comercial.length; j++) {
+    if (s.indexOf(comercial[j]) !== -1) return "Comercialização";
+  }
+
+  // Padrão: operações nomeadas pela cultura/atividade (milho, soja, bovinos...) são custeio.
+  return "Custeio";
+}
+
 function buscarCreditoTomado(cpf) {
-  if (!SHEET_BASE_CREDITO) return { sucesso: false, items: [], totalFinanciado: 0 };
+  const vazio = { sucesso: false, items: [], totalFinanciado: 0, totalCusteio: 0, totalInvestimento: 0, totalComercializacao: 0 };
+  if (!SHEET_BASE_CREDITO) return vazio;
 
   const cpfAlvo = String(cpf).replace(/\D/g, "").replace(/^0+/, "");
-  if (!cpfAlvo) return { sucesso: false, items: [], totalFinanciado: 0 };
+  if (!cpfAlvo) return vazio;
 
   const dados = SHEET_BASE_CREDITO.getDataRange().getValues();
-  if (dados.length < 2) return { sucesso: true, items: [], totalFinanciado: 0 };
+  if (dados.length < 2) return { sucesso: true, items: [], totalFinanciado: 0, totalCusteio: 0, totalInvestimento: 0, totalComercializacao: 0 };
 
   const H = dados[0];
   const items = [];
   let totalFinanciado = 0;
+  let totalCusteio = 0;
+  let totalInvestimento = 0;
+  let totalComercializacao = 0;
 
   for (let r = 1; r < dados.length; r++) {
     const rowCpf = String(dados[r][H.indexOf("nr_cpf_cnpj")]).replace(/\D/g, "").replace(/^0+/, "");
     if (rowCpf === cpfAlvo) {
+      const produto = String(dados[r][H.indexOf("produto")]);
+      const atividade = String(dados[r][H.indexOf("atividade")]);
+      const iFinRec = H.indexOf("finalidade_recurso");
+      const finalidadeRecurso = iFinRec !== -1 ? dados[r][iFinRec] : "";
       const valorFin = _numBR(dados[r][H.indexOf("valor_financiado")]);
       const aliq = _numBR(dados[r][H.indexOf("aliquota_proagro")]);
       // Valor tomado = valor financiado + Alíquota do ProAgro (quando houver).
-      // É o que conta para o limite já utilizado pelo associado.
       const valorTom = valorFin * (aliq > 0 ? (1 + aliq / 100) : 1);
+      const finalidade = _classificarFinalidadeCredito(produto, atividade, finalidadeRecurso);
+
       totalFinanciado += valorTom;
+      if (finalidade === "Investimento") totalInvestimento += valorTom;
+      else if (finalidade === "Comercialização") totalComercializacao += valorTom;
+      else totalCusteio += valorTom;
 
       items.push({
         anoSafra: String(dados[r][H.indexOf("ano_safra")]),
-        produto: String(dados[r][H.indexOf("produto")]),
-        atividade: String(dados[r][H.indexOf("atividade")]),
+        produto: produto,
+        atividade: atividade,
         ifFin: String(dados[r][H.indexOf("if_fin")]),
+        finalidade: finalidade,
         valorFinanciado: valorFin,
         aliquotaProagro: aliq,
         valorTomado: valorTom
@@ -775,7 +841,14 @@ function buscarCreditoTomado(cpf) {
     }
   }
 
-  return { sucesso: true, items: items, totalFinanciado: totalFinanciado };
+  return {
+    sucesso: true,
+    items: items,
+    totalFinanciado: totalFinanciado,
+    totalCusteio: totalCusteio,
+    totalInvestimento: totalInvestimento,
+    totalComercializacao: totalComercializacao
+  };
 }
 
 // ==================== CHECKLISTS DOCUMENTAÇÃO ====================
@@ -1645,7 +1718,7 @@ function processarArquivoCredito(filename, contentText) {
  * cabeçalhos nomeados OU posições fixas do export SICOR/CACR.
  */
 function _gravarCreditoMatriz(valores) {
-  const headers = ["nr_cpf_cnpj", "ano_safra", "produto", "atividade", "if_fin", "valor_financiado", "aliquota_proagro", "valor_tomado"];
+  const headers = ["nr_cpf_cnpj", "ano_safra", "produto", "atividade", "finalidade_recurso", "if_fin", "valor_financiado", "aliquota_proagro", "valor_tomado"];
   SHEET_BASE_CREDITO.clear();
   SHEET_BASE_CREDITO.getRange(1, 1, 1, headers.length).setValues([headers]);
   SHEET_BASE_CREDITO.getRange(1, 1, 1, headers.length).setFontWeight("bold").setBackground("#005c46").setFontColor("white");
@@ -1660,20 +1733,21 @@ function _gravarCreditoMatriz(valores) {
   const usarNomes = cpfIdx !== -1;
 
   // Posições fixas (base 0) do layout SICOR/CACR
-  const P = { cpf: 22, safra: 2, produto: 6, atividade: 18, ifFin: 10, valFin: 3, aliq: 27 };
+  const P = { cpf: 22, safra: 2, produto: 6, atividade: 18, finalidade: 11, ifFin: 10, valFin: 3, aliq: 27 };
 
   const rows = [];
   for (let r = 1; r < valores.length; r++) {
     const row = valores[r];
     if (!row || row.length === 0) continue;
 
-    let cpf, safra, produto, atividade, ifFin, valFin, aliq;
+    let cpf, safra, produto, atividade, finalidade, ifFin, valFin, aliq;
     if (usarNomes) {
       const g = function (nomes, def) { const p = acha(nomes); return p !== -1 ? row[p] : def; };
       cpf = String(g(["nr_cpf_cnpj", "cpf_cnpj", "cpf", "cnpj"], "") || "").trim();
       safra = String(g(["ano_safra", "safra"], "") || "").trim();
-      produto = String(g(["produto", "linha", "finalidade"], "") || "").trim();
+      produto = String(g(["produto", "linha"], "") || "").trim();
       atividade = String(g(["atividade", "cultura"], "") || "").trim();
+      finalidade = String(g(["finalidade_recurso", "finalidade recurso", "finalidade do recurso", "finalidade_do_recurso", "finalidade"], "") || "").trim();
       ifFin = String(g(["if_fin", "instituicao", "if_financiamento"], "") || "").trim();
       valFin = _numBR(g(["valor_financiado", "valor"], 0));
       aliq = _numBR(g(["aliquota_proagro", "proagro", "aliquota"], 0));
@@ -1682,6 +1756,7 @@ function _gravarCreditoMatriz(valores) {
       safra = String(row[P.safra] || "").trim();
       produto = String(row[P.produto] || "").trim();
       atividade = String(row[P.atividade] || "").trim();
+      finalidade = P.finalidade !== undefined ? String(row[P.finalidade] || "").trim() : "";
       ifFin = String(row[P.ifFin] || "").trim();
       valFin = _numBR(row[P.valFin]);
       aliq = _numBR(row[P.aliq]);
@@ -1693,11 +1768,15 @@ function _gravarCreditoMatriz(valores) {
     const fator = aliq > 0 ? (1 + aliq / 100) : 1;
     const valTom = valFin * fator;
 
+    // Normaliza a finalidade oficial; se vier vazia, classifica por produto/atividade.
+    const finalidadeNorm = _classificarFinalidadeCredito(produto, atividade, finalidade);
+
     rows.push([
       cpf,
       safra || "2025/2026",
       (produto || "CRÉDITO RURAL").toUpperCase(),
       atividade || "Outros",
+      finalidadeNorm,
       ifFin || "Cresol",
       valFin,
       aliq,
@@ -1793,8 +1872,11 @@ const IA_SYSTEM_INSTRUCTION_PADRAO =
 "* Bioeconomia Solar (3% a.a.): Sistemas fotovoltaicos, somente via Finame.\n\n" +
 "ORIENTAÇÕES OPERACIONAIS:\n" +
 "- Quando o sistema informar as linhas ELEGÍVEIS já filtradas para este produtor, priorize recomendar entre elas; se nenhuma delas atender bem, explique o motivo e indique a linha da base acima que melhor se aplica.\n" +
-"- Sua resposta é um apoio à decisão do analista, não uma aprovação de crédito. Seja objetivo.\n" +
-"- Responda em português do Brasil, em formato claro: 1) Classificação do produtor; 2) Tipo de operação (custeio/investimento); 3) Linha recomendada e por quê (taxa/prazo); 4) Alternativas, se houver; 5) Ressalvas/documentos a verificar.";
+"- ANÁLISE DE LIMITES: separe SEMPRE as operações de CUSTEIO das de INVESTIMENTO no histórico SICOR. Investimento (tratores, máquinas, benfeitorias) tem limite próprio e NÃO consome o limite de custeio. Calcule a margem remanescente de custeio como: (teto de custeio do grupo) − (total de custeio já tomado, com ProAgro). O valor máximo do novo contrato de custeio é essa margem.\n" +
+"- TRAVA DO SICOR: alerte que o SICOR bloqueia contratações de custeio que superem a margem remanescente na safra; o valor proposto deve ser menor ou igual a esse saldo.\n" +
+"- ESTRATÉGIA HÍBRIDA: se a necessidade do produtor superar a margem do PRONAF, sugira operação complementar (ex.: contratar a margem no PRONAF à menor taxa e o excedente no PRONAMP, priorizando a modalidade Sustentável quando aplicável), sempre que o produtor também se enquadrar no outro programa.\n" +
+"- Sua resposta é um apoio à decisão do analista, não uma aprovação de crédito. Seja objetivo, mas completo.\n" +
+"- Responda em português do Brasil, de forma organizada, cobrindo quando fizer sentido: Perfil do associado e enquadramento; Análise de limites (custeio vs investimento e margem remanescente); Linha recomendada e justificativa; Condições financeiras (taxa, limite para o contrato, IOF quando conhecido); Prazo e carência sugeridos; Regras e cuidados (trava do SICOR, ProAgro/seguro, documentação); Alternativa próxima / estratégia híbrida se a demanda superar a margem.";
 
 /** Lê a chave da API das Script Properties (nunca fica na planilha nem no código). */
 function _obterChaveIA() {
@@ -1909,30 +1991,71 @@ function _iaMontarCenario(ctx) {
   if (ctx.valorPretendido !== undefined && ctx.valorPretendido !== null && ctx.valorPretendido !== "")
     linhas.push("- Valor pretendido (R$): " + ctx.valorPretendido);
   if (ctx.valorTomado !== undefined && ctx.valorTomado !== null && ctx.valorTomado !== "")
-    linhas.push("- Valor já tomado em outras linhas (R$, inclui ProAgro): " + ctx.valorTomado);
+    linhas.push("- Custeio já tomado que consome o limite de custeio (R$, inclui ProAgro): " + ctx.valorTomado);
+
+  // Histórico SICOR resumido, separando custeio (consome limite) de investimento.
+  const sicor = ctx.sicorResumo || null;
+  if (sicor) {
+    linhas.push("");
+    linhas.push("HISTÓRICO SICOR (safra vigente) — separado por finalidade:");
+    linhas.push("- Total CUSTEIO tomado (consome o limite de custeio do grupo): R$ " + (sicor.totalCusteio || 0));
+    linhas.push("- Total INVESTIMENTO tomado (limite próprio, NÃO consome custeio): R$ " + (sicor.totalInvestimento || 0));
+    if (sicor.totalComercializacao)
+      linhas.push("- Total COMERCIALIZAÇÃO tomado: R$ " + sicor.totalComercializacao);
+    const itens = Array.isArray(sicor.itens) ? sicor.itens : [];
+    if (itens.length) {
+      linhas.push("Operações ativas:");
+      itens.forEach(function (it) {
+        linhas.push("  • " + [it.produto, it.atividade].filter(Boolean).join(" / ") +
+          " — finalidade: " + (it.finalidade || "Custeio") +
+          " — valor tomado: R$ " + (it.valorTomado || 0));
+      });
+    }
+    linhas.push("IMPORTANTE: ao calcular a margem remanescente de custeio, subtraia do teto de custeio do grupo APENAS o total de custeio — nunca o investimento.");
+  }
 
   const elegiveis = Array.isArray(ctx.linhasElegiveis) ? ctx.linhasElegiveis : [];
+  const houveSimulacao = ctx.simulacaoRealizada === true;
+
   if (elegiveis.length) {
+    // O sistema aplicou as regras e encontrou linhas disponíveis.
     linhas.push("");
-    linhas.push("LINHAS ELEGÍVEIS JÁ FILTRADAS PELO SISTEMA PARA ESTE PRODUTOR:");
+    linhas.push("VEREDITO DO SISTEMA: " + elegiveis.length + " linha(s) ELEGÍVEL(is) após aplicar as regras (grupo de enquadramento, renda, tipo de pessoa, cultura/tags e limite disponível descontado o valor já tomado):");
     elegiveis.forEach(function (l, i) {
       const partes = [];
       if (l.nome) partes.push(l.nome);
       if (l.orgao) partes.push("órgão: " + l.orgao);
       if (l.taxa) partes.push("taxa: " + l.taxa);
       if (l.prazo) partes.push("prazo: " + l.prazo);
+      if (l.carencia) partes.push("carência: " + l.carencia);
       if (l.teto) partes.push("teto: " + l.teto);
       if (l.saldoDisponivel !== undefined && l.saldoDisponivel !== null && l.saldoDisponivel !== "")
         partes.push("saldo disponível: " + l.saldoDisponivel);
       linhas.push((i + 1) + ") " + partes.join(" | "));
     });
-  } else {
     linhas.push("");
-    linhas.push("O sistema não enviou linhas pré-filtradas; use a base de dados das diretrizes.");
+    linhas.push("Recomende a melhor opção ENTRE as linhas elegíveis acima (menor custo e prazo adequado).");
+    linhas.push("");
+    linhas.push("Pergunta: qual a melhor linha de crédito (menor custo e prazo adequado) para este produtor?");
+  } else if (houveSimulacao) {
+    // O sistema aplicou as regras e NÃO encontrou nenhuma linha disponível.
+    linhas.push("");
+    linhas.push("VEREDITO DO SISTEMA: NENHUMA linha ficou disponível para este cenário. O sistema aplicou as regras vigentes (grupo de enquadramento, renda, tipo de pessoa, cultura/tags e, principalmente, o limite disponível após descontar o valor já tomado) e nenhuma linha do grupo atendeu.");
+    linhas.push("");
+    linhas.push("INSTRUÇÕES OBRIGATÓRIAS PARA ESTE CASO:");
+    linhas.push("- NÃO apresente nenhuma linha como disponível ou aprovada — isso contrariaria o resultado do sistema.");
+    linhas.push("- Explique, de forma objetiva, os prováveis MOTIVOS da ausência de enquadramento (ex.: limite de crédito do grupo já esgotado pelo valor tomado, renda fora da faixa, requisitos/cultura não atendidos).");
+    linhas.push("- Se pertinente, indique o que o analista poderia REAVALIAR (ex.: verificar se há saldo em outro grupo/programa, considerar a próxima safra, reduzir o valor pretendido, revisar operações já liquidadas), sempre deixando claro que são hipóteses a confirmar.");
+    linhas.push("");
+    linhas.push("Pergunta: por que este produtor não tem linha disponível e o que o analista pode reavaliar?");
+  } else {
+    // Chamada sem simulação prévia (fallback): usar a base das diretrizes.
+    linhas.push("");
+    linhas.push("O sistema não enviou o resultado de uma simulação; use a base de dados das diretrizes como referência.");
+    linhas.push("");
+    linhas.push("Pergunta: qual a melhor linha de crédito (menor custo e prazo adequado) para este produtor?");
   }
 
-  linhas.push("");
-  linhas.push("Pergunta: qual a melhor linha de crédito (menor custo e prazo adequado) para este produtor?");
   return linhas.join("\n");
 }
 
@@ -1965,7 +2088,7 @@ function sugerirMelhorLinhaIA(contexto) {
 function _iaChamarGemini(chave, modelo, system, pergunta) {
   const url = IA_ENDPOINT_GEMINI_BASE + encodeURIComponent(modelo) + ":generateContent";
 
-  const generationConfig = { maxOutputTokens: 2048, temperature: 0.2 };
+  const generationConfig = { maxOutputTokens: 3072, temperature: 0.2 };
   // Nos modelos "flash" o raciocínio interno consome tokens de saída; desligá-lo
   // evita respostas vazias e reduz custo. Modelos "pro" mantêm o raciocínio.
   if (/flash/i.test(modelo)) generationConfig.thinkingConfig = { thinkingBudget: 0 };
@@ -2035,7 +2158,7 @@ function _iaChamarGemini(chave, modelo, system, pergunta) {
 function _iaChamarAnthropic(chave, modelo, system, pergunta) {
   const payload = {
     model: modelo,
-    max_tokens: 1200,
+    max_tokens: 2000,
     system: system,
     messages: [{ role: "user", content: pergunta }]
   };

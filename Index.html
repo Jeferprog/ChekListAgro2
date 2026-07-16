@@ -144,7 +144,13 @@
               sucesso: true, nome: "JEFERSON OLIVEIRA DA SILVA", cpfCnpj: "12345678909", conta: "12345-6", tipo: "Física", rendaAnual: 350000, rendaMensal: 29166
             });
             else if (methodName === "buscarCreditoTomado") resolve({
-              sucesso: true, items: [{ anoSafra: "2025/2026", produto: "PRONAF CUSTEIO AGRÍCOLA", atividade: "Milho", ifFin: "Cresol", valorFinanciado: 45000, aliquotaProagro: 3, valorTomado: 46350 }], totalFinanciado: 46350
+              sucesso: true,
+              items: [
+                { anoSafra: "2025/2026", produto: "TRATOR", atividade: "Agrícola", ifFin: "Sicredi", finalidade: "Investimento", valorFinanciado: 146000, aliquotaProagro: 0, valorTomado: 146000 },
+                { anoSafra: "2025/2026", produto: "BOVINOS", atividade: "Pecuário(A)", ifFin: "Sicredi", finalidade: "Custeio", valorFinanciado: 104000, aliquotaProagro: 0, valorTomado: 104000 },
+                { anoSafra: "2025/2026", produto: "MILHO", atividade: "Agrícola", ifFin: "Sicredi", finalidade: "Custeio", valorFinanciado: 90253.80, aliquotaProagro: 10, valorTomado: 99279.18 }
+              ],
+              totalFinanciado: 349279.18, totalCusteio: 203279.18, totalInvestimento: 146000, totalComercializacao: 0
             });
             else if (methodName === "obterChecklistDocs") resolve(["(P) Extrato DAP", "(P) CAR Recibo", "(F) CETCR", "(F) CCB"]);
             else if (methodName === "importarChecklistLinha") resolve({ sucesso: true, success: true, nome: "PRONAF CUSTEIO AGRÍCOLA Faixa I", qtdP: 10, qtdF: 7, total: 17 });
@@ -176,6 +182,7 @@
       const [buscaCpf, setBuscaCpf] = useState("");
       const [associadoData, setAssociadoData] = useState(null);
       const [creditHistory, setCreditHistory] = useState([]);
+      const [creditTotals, setCreditTotals] = useState({ custeio: 0, investimento: 0, comercializacao: 0, total: 0 });
       const [paramFinalidade, setParamFinalidade] = useState("");
       const [paramProduto, setParamProduto] = useState("");
       const [customTipoPessoa, setCustomTipoPessoa] = useState("");
@@ -316,15 +323,25 @@
             const cred = await runGas("buscarCreditoTomado", assoc.cpfCnpj);
             if (cred.sucesso) {
               setCreditHistory(cred.items);
-              setCustomValorTomado(cred.totalFinanciado);
+              setCreditTotals({
+                custeio: cred.totalCusteio || 0,
+                investimento: cred.totalInvestimento || 0,
+                comercializacao: cred.totalComercializacao || 0,
+                total: cred.totalFinanciado || 0
+              });
+              // Só o CUSTEIO consome o limite de custeio do enquadramento.
+              // Investimento tem limite próprio e não reduz a margem de custeio.
+              setCustomValorTomado(cred.totalCusteio || 0);
             } else {
               setCreditHistory([]);
+              setCreditTotals({ custeio: 0, investimento: 0, comercializacao: 0, total: 0 });
               setCustomValorTomado(0);
             }
           } else {
             alert("Associado não cadastrado na base oficial da Cresol.");
             setAssociadoData(null);
             setCreditHistory([]);
+            setCreditTotals({ custeio: 0, investimento: 0, comercializacao: 0, total: 0 });
             setCustomValorTomado("");
           }
         } catch (err) {
@@ -530,15 +547,34 @@
             finalidade: paramFinalidade || "",
             produto: paramProduto || "",
             valorTomado: parseFloat(customValorTomado) || 0,
+            // O botão só aparece após simular, então aqui houve simulação.
+            // Lista vazia = o sistema NÃO encontrou linha (a IA deve respeitar isso).
+            simulacaoRealizada: searchPerformed,
+            qtdElegiveis: (searchResult || []).length,
             linhasElegiveis: (searchResult || []).map(l => ({
               nome: l.nome,
               orgao: l.orgao,
               taxa: l.taxaDescricao || (l.taxaMin ? (l.taxaMin + "% a.a.") : ""),
               prazo: l.prazo ? (l.prazo + " meses") : "",
+              carencia: l.carencia ? (l.carencia + " meses") : "",
               teto: l.limiteMax ? ("R$ " + Number(l.limiteMax).toLocaleString("pt-BR")) : "",
               saldoDisponivel: (l.limiteDisponivel !== undefined && l.limiteDisponivel !== null)
                 ? ("R$ " + Number(l.limiteDisponivel).toLocaleString("pt-BR")) : ""
-            }))
+            })),
+            // Histórico SICOR resumido (sem CPF/nome) para a IA analisar limites.
+            sicorResumo: {
+              totalCusteio: creditTotals.custeio || 0,
+              totalInvestimento: creditTotals.investimento || 0,
+              totalComercializacao: creditTotals.comercializacao || 0,
+              total: creditTotals.total || 0,
+              itens: (creditHistory || []).map(h => ({
+                safra: h.anoSafra,
+                produto: h.produto,
+                atividade: h.atividade,
+                finalidade: h.finalidade || "Custeio",
+                valorTomado: h.valorTomado
+              }))
+            }
           };
           const r = await runGas("sugerirMelhorLinhaIA", contexto);
           if (r && (r.success || r.sucesso) && r.recomendacao) {
@@ -600,6 +636,7 @@
         setBuscaCpf("");
         setAssociadoData(null);
         setCreditHistory([]);
+        setCreditTotals({ custeio: 0, investimento: 0, comercializacao: 0, total: 0 });
         setParamFinalidade("");
         setParamProduto("");
         setCustomRenda("");
@@ -1376,6 +1413,7 @@
                               <th className="py-2">Safra</th>
                               <th className="py-2">Produto</th>
                               <th className="py-2">Atividade</th>
+                              <th className="py-2">Finalidade</th>
                               <th className="py-2">IF Financeira</th>
                               <th className="py-2 text-right">Valor Financiado (R$)</th>
                               <th className="py-2 text-right">Alíq. ProAgro</th>
@@ -1388,6 +1426,15 @@
                                 <td className="py-2 font-medium">{h.anoSafra}</td>
                                 <td className="py-2">{h.produto}</td>
                                 <td className="py-2">{h.atividade}</td>
+                                <td className="py-2">
+                                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                                    h.finalidade === "Investimento" ? "bg-indigo-100 text-indigo-700"
+                                      : h.finalidade === "Comercialização" ? "bg-amber-100 text-amber-700"
+                                      : "bg-emerald-100 text-emerald-700"
+                                  }`}>
+                                    {h.finalidade || "Custeio"}
+                                  </span>
+                                </td>
                                 <td className="py-2">{h.ifFin}</td>
                                 <td className="py-2 text-right">
                                   R$ {Number(h.valorFinanciado || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
@@ -1401,6 +1448,29 @@
                           </tbody>
                         </table>
                       </div>
+
+                      {/* Resumo por finalidade — só o custeio consome o limite de custeio */}
+                      <div className="mt-3 pt-3 border-t border-border-gray/50 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                        <div className="bg-emerald-50 rounded px-3 py-2">
+                          <div className="text-[10px] text-emerald-700 font-bold uppercase tracking-wide">Custeio tomado</div>
+                          <div className="font-bold text-emerald-800">R$ {Number(creditTotals.custeio || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</div>
+                          <div className="text-[10px] text-text-gray">Consome o limite de custeio</div>
+                        </div>
+                        <div className="bg-indigo-50 rounded px-3 py-2">
+                          <div className="text-[10px] text-indigo-700 font-bold uppercase tracking-wide">Investimento tomado</div>
+                          <div className="font-bold text-indigo-800">R$ {Number(creditTotals.investimento || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</div>
+                          <div className="text-[10px] text-text-gray">Limite próprio — não reduz custeio</div>
+                        </div>
+                        <div className="bg-slate-50 rounded px-3 py-2">
+                          <div className="text-[10px] text-text-gray font-bold uppercase tracking-wide">Total tomado</div>
+                          <div className="font-bold text-text-dark">R$ {Number(creditTotals.total || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</div>
+                          <div className="text-[10px] text-text-gray">Somatório geral</div>
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-text-gray font-light mt-2">
+                        O campo "Valor de Crédito Custeio Rural já Tomado" foi preenchido com o total de <b>custeio</b> (R$ {Number(creditTotals.custeio || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}),
+                        pois operações de investimento (ex.: trator/máquinas) possuem limite próprio e não reduzem a margem de custeio. Ajuste manualmente se necessário.
+                      </p>
                     </div>
                   )}
 
@@ -1448,7 +1518,7 @@
                         {iaRecomendacao && (
                           <div className="mt-2 bg-[#f0f9f4] border border-primary-green/30 p-4 rounded-lg">
                             <div className="flex items-center gap-1.5 text-primary-green font-bold text-xs mb-2">
-                              <span>🤖 Sugestão do Especialista de Crédito (IA)</span>
+                              <span>🤖 {searchResult.length === 0 ? "Análise do Especialista de Crédito (IA) — sem enquadramento automático" : "Sugestão do Especialista de Crédito (IA)"}</span>
                             </div>
                             <p className="text-xs text-text-dark whitespace-pre-wrap leading-relaxed">{iaRecomendacao}</p>
                             <p className="text-[10px] text-text-gray font-light mt-3 border-t border-primary-green/20 pt-2">
