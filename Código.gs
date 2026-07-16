@@ -104,11 +104,11 @@ function inicializarSheetBase() {
 
 function inicializarSheetCredito() {
   if (SHEET_BASE_CREDITO.getLastRow() === 0) {
-    const cabecalhos = ["nr_cpf_cnpj", "ano_safra", "produto", "atividade", "if_fin", "valor_financiado", "aliquota_proagro", "valor_tomado"];
+    const cabecalhos = ["nr_cpf_cnpj", "ano_safra", "produto", "atividade", "finalidade_recurso", "if_fin", "valor_financiado", "aliquota_proagro", "valor_tomado"];
     SHEET_BASE_CREDITO.appendRow(cabecalhos);
     SHEET_BASE_CREDITO.getRange(1, 1, 1, cabecalhos.length).setFontWeight("bold").setBackground("#005c46").setFontColor("white");
 
-    SHEET_BASE_CREDITO.appendRow(["12345678909", "2025/2026", "PRONAF CUSTEIO AGRÍCOLA", "Milho", "Cresol", 45000, 3, 46350]);
+    SHEET_BASE_CREDITO.appendRow(["12345678909", "2025/2026", "PRONAF CUSTEIO AGRÍCOLA", "Milho", "Custeio", "Cresol", 45000, 3, 46350]);
   }
 }
 
@@ -741,12 +741,34 @@ function buscarAssociado(termo) {
 }
 
 /**
- * Classifica uma operação do SICOR em Custeio / Investimento / Comercialização
- * a partir do nome do produto e da atividade. Apenas o CUSTEIO consome o
- * limite de custeio do enquadramento (PRONAF/PRONAMP); investimento e
- * comercialização possuem limites próprios e NÃO reduzem o custeio.
+ * Normaliza o valor da coluna "Finalidade Recurso" do SICOR para
+ * Custeio / Investimento / Comercialização. Retorna "" quando não reconhece
+ * (nesses casos o sistema recorre à classificação por produto/atividade).
  */
-function _classificarFinalidadeCredito(produto, atividade) {
+function _normalizarFinalidadeRecurso(txt) {
+  const s = String(txt || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+  if (!s) return "";
+  if (s.indexOf("custeio") !== -1) return "Custeio";
+  if (s.indexOf("investi") !== -1) return "Investimento";
+  if (s.indexOf("comerci") !== -1) return "Comercialização";
+  // Alguns exports usam códigos: 1=custeio, 2=investimento, 3=comercializacao
+  if (s === "1") return "Custeio";
+  if (s === "2") return "Investimento";
+  if (s === "3") return "Comercialização";
+  return "";
+}
+
+/**
+ * Classifica uma operação do SICOR em Custeio / Investimento / Comercialização.
+ * Prioriza a coluna oficial "Finalidade Recurso" (quando informada) e recorre
+ * ao produto/atividade apenas como fallback. Apenas o CUSTEIO consome o limite
+ * de custeio do enquadramento (PRONAF/PRONAMP); investimento e comercialização
+ * possuem limites próprios e NÃO reduzem o custeio.
+ */
+function _classificarFinalidadeCredito(produto, atividade, finalidadeRecurso) {
+  const oficial = _normalizarFinalidadeRecurso(finalidadeRecurso);
+  if (oficial) return oficial;
+
   const s = (String(produto || "") + " " + String(atividade || ""))
     .toLowerCase()
     .normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -793,11 +815,13 @@ function buscarCreditoTomado(cpf) {
     if (rowCpf === cpfAlvo) {
       const produto = String(dados[r][H.indexOf("produto")]);
       const atividade = String(dados[r][H.indexOf("atividade")]);
+      const iFinRec = H.indexOf("finalidade_recurso");
+      const finalidadeRecurso = iFinRec !== -1 ? dados[r][iFinRec] : "";
       const valorFin = _numBR(dados[r][H.indexOf("valor_financiado")]);
       const aliq = _numBR(dados[r][H.indexOf("aliquota_proagro")]);
       // Valor tomado = valor financiado + Alíquota do ProAgro (quando houver).
       const valorTom = valorFin * (aliq > 0 ? (1 + aliq / 100) : 1);
-      const finalidade = _classificarFinalidadeCredito(produto, atividade);
+      const finalidade = _classificarFinalidadeCredito(produto, atividade, finalidadeRecurso);
 
       totalFinanciado += valorTom;
       if (finalidade === "Investimento") totalInvestimento += valorTom;
@@ -1694,7 +1718,7 @@ function processarArquivoCredito(filename, contentText) {
  * cabeçalhos nomeados OU posições fixas do export SICOR/CACR.
  */
 function _gravarCreditoMatriz(valores) {
-  const headers = ["nr_cpf_cnpj", "ano_safra", "produto", "atividade", "if_fin", "valor_financiado", "aliquota_proagro", "valor_tomado"];
+  const headers = ["nr_cpf_cnpj", "ano_safra", "produto", "atividade", "finalidade_recurso", "if_fin", "valor_financiado", "aliquota_proagro", "valor_tomado"];
   SHEET_BASE_CREDITO.clear();
   SHEET_BASE_CREDITO.getRange(1, 1, 1, headers.length).setValues([headers]);
   SHEET_BASE_CREDITO.getRange(1, 1, 1, headers.length).setFontWeight("bold").setBackground("#005c46").setFontColor("white");
@@ -1716,13 +1740,14 @@ function _gravarCreditoMatriz(valores) {
     const row = valores[r];
     if (!row || row.length === 0) continue;
 
-    let cpf, safra, produto, atividade, ifFin, valFin, aliq;
+    let cpf, safra, produto, atividade, finalidade, ifFin, valFin, aliq;
     if (usarNomes) {
       const g = function (nomes, def) { const p = acha(nomes); return p !== -1 ? row[p] : def; };
       cpf = String(g(["nr_cpf_cnpj", "cpf_cnpj", "cpf", "cnpj"], "") || "").trim();
       safra = String(g(["ano_safra", "safra"], "") || "").trim();
-      produto = String(g(["produto", "linha", "finalidade"], "") || "").trim();
+      produto = String(g(["produto", "linha"], "") || "").trim();
       atividade = String(g(["atividade", "cultura"], "") || "").trim();
+      finalidade = String(g(["finalidade_recurso", "finalidade recurso", "finalidade do recurso", "finalidade_do_recurso", "finalidade"], "") || "").trim();
       ifFin = String(g(["if_fin", "instituicao", "if_financiamento"], "") || "").trim();
       valFin = _numBR(g(["valor_financiado", "valor"], 0));
       aliq = _numBR(g(["aliquota_proagro", "proagro", "aliquota"], 0));
@@ -1731,6 +1756,7 @@ function _gravarCreditoMatriz(valores) {
       safra = String(row[P.safra] || "").trim();
       produto = String(row[P.produto] || "").trim();
       atividade = String(row[P.atividade] || "").trim();
+      finalidade = P.finalidade !== undefined ? String(row[P.finalidade] || "").trim() : "";
       ifFin = String(row[P.ifFin] || "").trim();
       valFin = _numBR(row[P.valFin]);
       aliq = _numBR(row[P.aliq]);
@@ -1742,11 +1768,15 @@ function _gravarCreditoMatriz(valores) {
     const fator = aliq > 0 ? (1 + aliq / 100) : 1;
     const valTom = valFin * fator;
 
+    // Normaliza a finalidade oficial; se vier vazia, classifica por produto/atividade.
+    const finalidadeNorm = _classificarFinalidadeCredito(produto, atividade, finalidade);
+
     rows.push([
       cpf,
       safra || "2025/2026",
       (produto || "CRÉDITO RURAL").toUpperCase(),
       atividade || "Outros",
+      finalidadeNorm,
       ifFin || "Cresol",
       valFin,
       aliq,
