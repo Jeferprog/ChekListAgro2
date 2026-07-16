@@ -138,7 +138,7 @@
             else if (methodName === "obterEmailsAdmin") resolve(["jeferson.deimling@cresolsicoper.com.br"]);
             else if (methodName === "obterLimitesEnquadramento") resolve({ pronaf: 250000, pronamp: 1500000 });
             else if (methodName === "listarTodasAsLinhas") resolve([
-              { id: "L-001", nome: "PRONAF CUSTEIO AGRÍCOLA - Faixa I", orgao: "Cresol / BNDES", finalidadePrincipal: "Custeio", finalidades: "agricola,custeio", enquadramento: "Sem limite/R$ 500 mil", taxaMin: 3, taxaMax: 4.5, taxaDescricao: "3% a 4.5% a.a.", prazo: 24, carencia: 3, limiteMin: 5000, limiteMax: 250000, requisitos: "DAP ativa", documentos: "(P) RG\n(P) DAP/CAF Ativa", status: "Ativa", observacoes: "", itensFinanciaveis: "Sementes, defensivos", culturas: "MILHO (até 25 mil), SOJA, TRIGO" }
+              { id: "L-001", nome: "PRONAF CUSTEIO AGRÍCOLA - Faixa I", orgao: "Cresol / BNDES", finalidadePrincipal: "Custeio", finalidades: "agricola,custeio", enquadramento: "Sem limite/R$ 500 mil", taxaMin: 3, taxaMax: 4.5, taxaDescricao: "3% a 4.5% a.a.", prazo: 24, carencia: 3, limiteMin: 5000, limiteMax: 250000, requisitos: "DAP ativa", documentos: "(P) RG\n(P) DAP/CAF Ativa", status: "Ativa", observacoes: "", itensFinanciaveis: "Sementes, defensivos", culturas: "MILHO (até 25 mil), SOJA, TRIGO", tipoPessoa: "PF", temChecklist: true }
             ]);
             else if (methodName === "buscarAssociado") resolve({
               sucesso: true, nome: "JEFERSON OLIVEIRA DA SILVA", cpfCnpj: "12345678909", conta: "12345-6", tipo: "Física", rendaAnual: 350000, rendaMensal: 29166
@@ -148,6 +148,11 @@
             });
             else if (methodName === "obterChecklistDocs") resolve(["(P) Extrato DAP", "(P) CAR Recibo", "(F) CETCR", "(F) CCB"]);
             else if (methodName === "importarChecklistLinha") resolve({ sucesso: true, success: true, nome: "PRONAF CUSTEIO AGRÍCOLA Faixa I", qtdP: 10, qtdF: 7, total: 17 });
+            else if (methodName === "iaConfigurada") resolve({ success: true, sucesso: true, configurada: true });
+            else if (methodName === "obterConfigIA") resolve({ success: true, sucesso: true, configurada: true, provider: "gemini", modelo: "gemini-2.5-flash", diretrizes: "Você é o Especialista em Crédito Rural e Agronegócio da Cresol. (diretrizes padrão — modo local)", diretrizesPadrao: "Você é o Especialista em Crédito Rural e Agronegócio da Cresol. (diretrizes padrão — modo local)" });
+            else if (methodName === "salvarConfigIA") resolve({ success: true, sucesso: true, provider: "gemini", modelo: "gemini-2.5-flash", mensagem: "Configurações da IA salvas." });
+            else if (methodName === "salvarChaveIA") resolve({ success: true, sucesso: true, configurada: true, mensagem: "Chave salva com segurança." });
+            else if (methodName === "sugerirMelhorLinhaIA") resolve({ success: true, sucesso: true, recomendacao: "1) Classificação do produtor: PRONAF.\n2) Tipo de operação: Custeio agrícola.\n3) Linha recomendada: PRONAF CUSTEIO AGRÍCOLA - Faixa I (3% a.a.), por ser a de menor taxa para milho até 25 mil, dentro do teto de R$ 250 mil.\n4) Alternativas: Faixa II (6.5% a.a.) caso a cultura não se enquadre na Faixa I.\n5) Ressalvas: confirmar DAP/CAF ativa e limite disponível no SICOR. (resposta simulada - modo local)" });
             else resolve({ success: true });
           }, 600);
         }
@@ -173,10 +178,23 @@
       const [creditHistory, setCreditHistory] = useState([]);
       const [paramFinalidade, setParamFinalidade] = useState("");
       const [paramProduto, setParamProduto] = useState("");
+      const [customTipoPessoa, setCustomTipoPessoa] = useState("");
       const [customRenda, setCustomRenda] = useState("");
       const [customValorTomado, setCustomValorTomado] = useState("");
       const [customEnquadramento, setCustomEnquadramento] = useState("demais");
       const [autoEnquadramento, setAutoEnquadramento] = useState(true);
+
+      // Agente de IA
+      const [iaDisponivel, setIaDisponivel] = useState(false);
+      const [iaLoading, setIaLoading] = useState(false);
+      const [iaRecomendacao, setIaRecomendacao] = useState("");
+      const [iaErro, setIaErro] = useState("");
+      const [chaveIA, setChaveIA] = useState("");
+      const [salvandoChaveIA, setSalvandoChaveIA] = useState(false);
+      const [iaProvider, setIaProvider] = useState("gemini");
+      const [iaModelo, setIaModelo] = useState("");
+      const [iaDiretrizes, setIaDiretrizes] = useState("");
+      const [salvandoConfigIA, setSalvandoConfigIA] = useState(false);
 
       // Controle de Modais
       const [showAddModal, setShowAddModal] = useState(false);
@@ -203,7 +221,22 @@
         carregarInfoUsuario();
         carregarConfiguracoes();
         carregarLinhas();
+        carregarStatusIA();
       }, []);
+
+      // Carrega o status e a configuração da IA (provedor, modelo, diretrizes).
+      // A chave da API nunca é retornada pelo backend.
+      const carregarStatusIA = async () => {
+        try {
+          const r = await runGas("obterConfigIA");
+          setIaDisponivel(!!(r && r.configurada));
+          if (r && r.provider) setIaProvider(r.provider);
+          if (r && r.modelo !== undefined) setIaModelo(r.modelo || "");
+          if (r && r.diretrizes !== undefined) setIaDiretrizes(r.diretrizes || "");
+        } catch (e) {
+          setIaDisponivel(false);
+        }
+      };
 
       // Perfil do usuário: define se as abas administrativas aparecem
       const carregarInfoUsuario = async () => {
@@ -274,6 +307,11 @@
           if (assoc.sucesso) {
             setAssociadoData(assoc);
             setCustomRenda(assoc.rendaAnual);
+            // Detecta PF/PJ pelo tipo (ds_pessoa_tipo) ou pelo tamanho do documento
+            const tp = String(assoc.tipo || "").toLowerCase();
+            const soDigitos = String(assoc.cpfCnpj || "").replace(/\D/g, "");
+            if (tp.indexOf("jur") !== -1 || tp === "pj" || soDigitos.length === 14) setCustomTipoPessoa("PJ");
+            else if (tp.indexOf("fis") !== -1 || tp === "pf" || soDigitos.length === 11) setCustomTipoPessoa("PF");
             // Buscar crédito já tomado
             const cred = await runGas("buscarCreditoTomado", assoc.cpfCnpj);
             if (cred.sucesso) {
@@ -301,7 +339,9 @@
       const handleBuscarLinhas = () => {
         setLoading(true);
         setLoadingText("Processando enquadramento...");
-        
+        setIaRecomendacao("");
+        setIaErro("");
+
         setTimeout(() => {
           const renda = parseFloat(customRenda) || 0;
           const valorTomado = parseFloat(customValorTomado) || 0;
@@ -413,6 +453,12 @@
               const lineGroup = helperGroupLinha(l.nome, l.enquadramento);
               if (lineGroup !== customEnquadramento) return false;
 
+              // Tipo de pessoa: linha só-PF não aparece para PJ (e vice-versa).
+              // Linhas com "PF/PJ" ou sem classificação passam sempre.
+              const lineTP = String(l.tipoPessoa || "").toUpperCase();
+              if (customTipoPessoa === "PJ" && lineTP === "PF") return false;
+              if (customTipoPessoa === "PF" && lineTP === "PJ") return false;
+
               // Validar renda
               if (!helperValidarRenda(renda, l.enquadramento)) return false;
 
@@ -468,6 +514,88 @@
         }, 500);
       };
 
+      // Consulta o agente de IA para sugerir a melhor linha (menor custo/prazo).
+      // Envia apenas dados não sensíveis (renda/enquadramento/finalidade), nunca CPF/nome.
+      const handleSugerirIA = async () => {
+        setIaLoading(true);
+        setIaErro("");
+        setIaRecomendacao("");
+        try {
+          const enqLabel = customEnquadramento === "pronaf" ? "PRONAF"
+            : customEnquadramento === "pronamp" ? "PRONAMP" : "DEMAIS";
+          const contexto = {
+            tipoPessoa: customTipoPessoa || "",
+            enquadramento: enqLabel,
+            renda: parseFloat(customRenda) || 0,
+            finalidade: paramFinalidade || "",
+            produto: paramProduto || "",
+            valorTomado: parseFloat(customValorTomado) || 0,
+            linhasElegiveis: (searchResult || []).map(l => ({
+              nome: l.nome,
+              orgao: l.orgao,
+              taxa: l.taxaDescricao || (l.taxaMin ? (l.taxaMin + "% a.a.") : ""),
+              prazo: l.prazo ? (l.prazo + " meses") : "",
+              teto: l.limiteMax ? ("R$ " + Number(l.limiteMax).toLocaleString("pt-BR")) : "",
+              saldoDisponivel: (l.limiteDisponivel !== undefined && l.limiteDisponivel !== null)
+                ? ("R$ " + Number(l.limiteDisponivel).toLocaleString("pt-BR")) : ""
+            }))
+          };
+          const r = await runGas("sugerirMelhorLinhaIA", contexto);
+          if (r && (r.success || r.sucesso) && r.recomendacao) {
+            setIaRecomendacao(r.recomendacao);
+          } else {
+            setIaErro((r && (r.error || r.erro)) || "Não foi possível obter a sugestão da IA.");
+          }
+        } catch (e) {
+          setIaErro(String((e && e.message) || e || "Erro ao consultar a IA."));
+        } finally {
+          setIaLoading(false);
+        }
+      };
+
+      // Administrador: salva a chave da API da IA (armazenada com segurança no servidor)
+      const handleSalvarChaveIA = async () => {
+        if (!chaveIA.trim()) return;
+        setSalvandoChaveIA(true);
+        try {
+          const r = await runGas("salvarChaveIA", chaveIA.trim());
+          if (r && (r.success || r.sucesso)) {
+            setIaDisponivel(!!r.configurada);
+            setChaveIA("");
+            alert(r.mensagem || "Chave da IA salva com segurança.");
+          } else {
+            alert((r && (r.error || r.erro)) || "Não foi possível salvar a chave.");
+          }
+        } catch (e) {
+          alert(String((e && e.message) || e || "Erro ao salvar a chave."));
+        } finally {
+          setSalvandoChaveIA(false);
+        }
+      };
+
+      // Administrador: salva provedor, modelo e diretrizes do agente de IA
+      const handleSalvarConfigIA = async () => {
+        setSalvandoConfigIA(true);
+        try {
+          const r = await runGas("salvarConfigIA", {
+            provider: iaProvider,
+            modelo: iaModelo.trim(),
+            diretrizes: iaDiretrizes
+          });
+          if (r && (r.success || r.sucesso)) {
+            if (r.modelo !== undefined) setIaModelo(r.modelo || "");
+            if (r.diretrizes !== undefined) setIaDiretrizes(r.diretrizes || "");
+            alert(r.mensagem || "Configurações da IA salvas.");
+          } else {
+            alert((r && (r.error || r.erro)) || "Não foi possível salvar as configurações da IA.");
+          }
+        } catch (e) {
+          alert(String((e && e.message) || e || "Erro ao salvar configurações da IA."));
+        } finally {
+          setSalvandoConfigIA(false);
+        }
+      };
+
       const limparFormSimulador = () => {
         setBuscaCpf("");
         setAssociadoData(null);
@@ -477,6 +605,7 @@
         setCustomRenda("");
         setCustomValorTomado("");
         setCustomEnquadramento("demais");
+        setCustomTipoPessoa("");
         setAutoEnquadramento(true);
         setSearchResult([]);
         setSearchPerformed(false);
@@ -1159,6 +1288,21 @@
                         </select>
                       </div>
 
+                      {/* Tipo de Pessoa (PF/PJ) */}
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs font-bold text-text-dark">Tipo de Pessoa</label>
+                        <select
+                          value={customTipoPessoa}
+                          onChange={e => setCustomTipoPessoa(e.target.value)}
+                          className="text-sm border border-border-gray rounded px-3 py-2 bg-white focus:outline-none"
+                        >
+                          <option value="">Todos (não filtrar)</option>
+                          <option value="PF">Pessoa Física</option>
+                          <option value="PJ">Pessoa Jurídica</option>
+                        </select>
+                        <small className="text-[10px] text-text-gray">Linhas exclusivas de Pessoa Física não aparecem para PJ.</small>
+                      </div>
+
                       {/* Crédito Tomado Atual */}
                       <div className="flex flex-col gap-1">
                         <label className="text-xs font-bold text-text-dark">Valor de Crédito Custeio Rural já Tomado (R$)</label>
@@ -1271,6 +1415,49 @@
                         {searchPerformed ? `${searchResult.length} linha(s) encontrada(s)` : "Aguardando simulação"}
                       </span>
                     </div>
+
+                    {/* AGENTE DE IA: sugestão da melhor linha */}
+                    {searchPerformed && (
+                      <div className="mb-4">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <button
+                            onClick={handleSugerirIA}
+                            disabled={iaLoading || !iaDisponivel}
+                            title={iaDisponivel ? "" : "IA não configurada. Um administrador precisa cadastrar a chave da API na aba Configurações do Sistema."}
+                            className={`flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded shadow-sm transition-all ${
+                              iaDisponivel && !iaLoading
+                                ? "bg-primary-green text-white hover:bg-opacity-95"
+                                : "bg-slate-200 text-text-gray cursor-not-allowed"
+                            }`}
+                          >
+                            {iaLoading ? "🤖 Analisando cenário..." : "🤖 Sugerir melhor linha (IA)"}
+                          </button>
+                          {!iaDisponivel && (
+                            <span className="text-[11px] text-text-gray font-light">
+                              IA não configurada {isAdmin ? "(cadastre a chave em Configurações do Sistema)" : "(indisponível)"}.
+                            </span>
+                          )}
+                        </div>
+
+                        {iaErro && (
+                          <div className="mt-2 bg-red-50 border border-red-200 p-3 rounded text-red-800 text-xs">
+                            {iaErro}
+                          </div>
+                        )}
+
+                        {iaRecomendacao && (
+                          <div className="mt-2 bg-[#f0f9f4] border border-primary-green/30 p-4 rounded-lg">
+                            <div className="flex items-center gap-1.5 text-primary-green font-bold text-xs mb-2">
+                              <span>🤖 Sugestão do Especialista de Crédito (IA)</span>
+                            </div>
+                            <p className="text-xs text-text-dark whitespace-pre-wrap leading-relaxed">{iaRecomendacao}</p>
+                            <p className="text-[10px] text-text-gray font-light mt-3 border-t border-primary-green/20 pt-2">
+                              Sugestão gerada por IA para apoio à decisão do analista. Não constitui aprovação de crédito — confirme enquadramento e documentação.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {!searchPerformed ? (
                       <div className="flex flex-col items-center justify-center py-16 text-text-gray gap-2">
@@ -1414,7 +1601,17 @@
                     <tbody className="divide-y divide-border-gray">
                       {linhas.map((l) => (
                         <tr key={l.id} className="hover:bg-slate-50 transition-colors">
-                          <td className="py-3.5 px-4 font-bold text-primary-green max-w-xs truncate">{l.nome}</td>
+                          <td className="py-3.5 px-4 font-bold text-primary-green max-w-xs">
+                            <div className="truncate">{l.nome}</div>
+                            <div className="flex gap-1.5 mt-1">
+                              {l.temChecklist && (
+                                <span className="bg-emerald-100 text-emerald-800 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">✓ Checklist</span>
+                              )}
+                              {l.tipoPessoa && (
+                                <span className="bg-slate-100 text-slate-700 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">{l.tipoPessoa}</span>
+                              )}
+                            </div>
+                          </td>
                           <td className="py-3.5 px-4 font-medium">{l.orgao}</td>
                           <td className="py-3.5 px-4 font-medium">{l.finalidadePrincipal}</td>
                           <td className="py-3.5 px-4">{l.taxaDescricao || `${l.taxaMin}% a.a.`}</td>
@@ -1450,10 +1647,10 @@
                               />
                               <button
                                 onClick={() => document.getElementById(`ckLineInput-${l.id}`)?.click()}
-                                className="text-[#0d6efd] hover:underline font-bold text-xs"
-                                title="Importar checklist (.xls, .xlsx, .docx ou .txt) para esta linha"
+                                className={`hover:underline font-bold text-xs ${l.temChecklist ? "text-emerald-700" : "text-[#0d6efd]"}`}
+                                title="Importar/substituir o checklist (.xls, .xlsx, .docx ou .txt) desta linha"
                               >
-                                Importar Checklist
+                                {l.temChecklist ? "Editar Checklist" : "Importar Checklist"}
                               </button>
                             </div>
                           </td>
@@ -1543,6 +1740,117 @@
                     </div>
                   </div>
 
+                </div>
+
+                {/* CARD: AGENTE DE IA (chave da API) */}
+                <div className="bg-white p-6 rounded-lg border border-border-gray shadow-xs border-l-4 border-primary-green">
+                  <div className="border-b border-border-gray pb-2 mb-4 flex items-center gap-2">
+                    <span className="text-lg">🤖</span>
+                    <h2 className="text-sm font-bold text-primary-green uppercase tracking-wider">Agente de IA — Sugestão de Linhas</h2>
+                  </div>
+
+                  <div className="flex flex-col gap-4 max-w-2xl">
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="font-bold text-text-dark">Status:</span>
+                      {iaDisponivel ? (
+                        <span className="text-emerald-700 font-bold">● Configurada e ativa</span>
+                      ) : (
+                        <span className="text-danger-red font-bold">● Não configurada</span>
+                      )}
+                    </div>
+
+                    {/* Provedor + Modelo */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-bold text-text-dark">Provedor de IA</label>
+                        <select
+                          value={iaProvider}
+                          onChange={e => {
+                            const p = e.target.value;
+                            setIaProvider(p);
+                            // Sugere o modelo padrão ao trocar de provedor, se o campo estiver vazio
+                            if (!iaModelo.trim()) setIaModelo(p === "anthropic" ? "claude-opus-4-8" : "gemini-2.5-flash");
+                          }}
+                          className="text-xs border border-border-gray rounded px-3 py-2 focus:outline-none bg-white"
+                        >
+                          <option value="gemini">Google Gemini</option>
+                          <option value="anthropic">Anthropic Claude</option>
+                        </select>
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-bold text-text-dark">Modelo</label>
+                        <input
+                          type="text"
+                          value={iaModelo}
+                          onChange={e => setIaModelo(e.target.value)}
+                          placeholder={iaProvider === "anthropic" ? "claude-opus-4-8" : "gemini-2.5-flash"}
+                          className="text-xs border border-border-gray rounded px-3 py-2 focus:outline-none"
+                        />
+                        <span className="text-[10px] text-text-gray font-light">
+                          Deixe em branco para usar o modelo padrão do provedor.
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Diretrizes do agente (parametrizável) */}
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-bold text-text-dark">Diretrizes do Agente (regras e base de linhas)</label>
+                      <p className="text-[10px] text-text-gray font-light -mt-0.5">
+                        Instruções que o agente segue ao recomendar linhas. Edite as taxas, faixas e limites conforme a política vigente.
+                        Deixe em branco para restaurar as diretrizes padrão do sistema.
+                      </p>
+                      <textarea
+                        value={iaDiretrizes}
+                        onChange={e => setIaDiretrizes(e.target.value)}
+                        rows={12}
+                        placeholder="Diretrizes do agente especialista de crédito..."
+                        className="text-xs border border-border-gray rounded px-3 py-2 focus:outline-none font-mono leading-relaxed"
+                      />
+                      <div className="flex justify-end">
+                        <button
+                          onClick={handleSalvarConfigIA}
+                          disabled={salvandoConfigIA}
+                          className={`text-xs font-bold px-4 py-2 rounded transition-all ${
+                            salvandoConfigIA ? "bg-slate-200 text-text-gray cursor-not-allowed" : "bg-primary-green text-white hover:bg-opacity-95"
+                          }`}
+                        >
+                          {salvandoConfigIA ? "Salvando..." : "Salvar Provedor, Modelo e Diretrizes"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Chave da API */}
+                    <div className="border-t border-border-gray/60 pt-4 flex flex-col gap-1.5">
+                      <label className="text-xs font-bold text-text-dark">
+                        Chave da API ({iaProvider === "anthropic" ? "Anthropic" : "Google Gemini"})
+                      </label>
+                      <p className="text-[10px] text-text-gray font-light -mt-1">
+                        A chave é armazenada com segurança no servidor (Script Properties) e nunca aparece na planilha nem no código.
+                        Ao consultar a IA, são enviados apenas dados de enquadramento (renda, finalidade, tipo de pessoa) — nunca CPF ou nome do associado.
+                      </p>
+                      <div className="flex gap-2">
+                        <input
+                          type="password"
+                          value={chaveIA}
+                          onChange={e => setChaveIA(e.target.value)}
+                          placeholder={iaDisponivel ? "•••••••• (deixe em branco para manter)" : "Cole aqui a chave da API"}
+                          autoComplete="off"
+                          className="flex-1 text-xs border border-border-gray rounded px-3 py-2 focus:outline-none"
+                        />
+                        <button
+                          onClick={handleSalvarChaveIA}
+                          disabled={salvandoChaveIA || !chaveIA.trim()}
+                          className={`text-xs font-bold px-3 py-2 rounded transition-all ${
+                            chaveIA.trim() && !salvandoChaveIA
+                              ? "bg-primary-green text-white hover:bg-opacity-95"
+                              : "bg-slate-200 text-text-gray cursor-not-allowed"
+                          }`}
+                        >
+                          {salvandoChaveIA ? "Salvando..." : "Salvar Chave"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 {/* CARD: IMPORTAÇÃO E SINCRONIZAÇÃO DE BASES */}
