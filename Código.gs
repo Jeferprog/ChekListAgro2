@@ -1735,12 +1735,22 @@ function processarArquivoAssociados(filename, contentText) {
  * AGENTE DE IA — Sugestão da melhor linha de crédito
  * =======================================================================*/
 
-const IA_PROP_CHAVE = "ANTHROPIC_API_KEY";
-const IA_MODELO = "claude-opus-4-8";
-const IA_ENDPOINT = "https://api.anthropic.com/v1/messages";
+const IA_PROP_CHAVE = "IA_API_KEY";              // chave atual (provedor selecionado)
+const IA_PROP_CHAVE_LEGADO = "ANTHROPIC_API_KEY"; // compatibilidade com versões anteriores
+const IA_PROVIDER_PADRAO = "gemini";
+const IA_MODELO_GEMINI_PADRAO = "gemini-2.5-flash";
+const IA_MODELO_ANTHROPIC_PADRAO = "claude-opus-4-8";
+const IA_ENDPOINT_ANTHROPIC = "https://api.anthropic.com/v1/messages";
+const IA_ENDPOINT_GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models/";
 
-// Diretrizes configuradas pela cooperativa para o agente especialista.
-const IA_SYSTEM_INSTRUCTION =
+// Nomes dos parâmetros salvos na aba Configurações (editáveis pelo admin).
+const IA_CFG_PROVIDER = "Provedor de IA";
+const IA_CFG_MODELO = "Modelo de IA";
+const IA_CFG_DIRETRIZES = "Diretrizes do Agente de IA";
+
+// Diretrizes PADRÃO do agente especialista — usadas quando o admin não
+// definiu diretrizes próprias na aba Configurações.
+const IA_SYSTEM_INSTRUCTION_PADRAO =
 "Você é o Especialista em Crédito Rural e Agronegócio da Cresol. Seu papel principal é atuar como um arquiteto de soluções financeiras para gerentes de carteira e associados. Seu objetivo absoluto é: diagnosticar a necessidade do produtor, cruzar com as regras de enquadramento vigentes e recomendar a linha de menor custo financeiro (menor taxa de juros) e prazo mais adequado.\n\n" +
 "DIRETRIZES DE COMPORTAMENTO:\n" +
 "- Sempre classifique o produtor (PRONAF, PRONAMP, DEMAIS).\n" +
@@ -1789,7 +1799,9 @@ const IA_SYSTEM_INSTRUCTION =
 /** Lê a chave da API das Script Properties (nunca fica na planilha nem no código). */
 function _obterChaveIA() {
   try {
-    const v = PropertiesService.getScriptProperties().getProperty(IA_PROP_CHAVE);
+    const props = PropertiesService.getScriptProperties();
+    let v = props.getProperty(IA_PROP_CHAVE);
+    if (!v) v = props.getProperty(IA_PROP_CHAVE_LEGADO); // compatibilidade
     return v ? String(v).trim() : "";
   } catch (e) {
     return "";
@@ -1801,20 +1813,85 @@ function salvarChaveIA(chave) {
   try {
     if (!usuarioEhAdmin()) return _fail("Apenas administradores podem configurar a chave da IA.");
     const c = String(chave || "").trim();
+    const props = PropertiesService.getScriptProperties();
     if (!c) {
-      PropertiesService.getScriptProperties().deleteProperty(IA_PROP_CHAVE);
+      props.deleteProperty(IA_PROP_CHAVE);
+      props.deleteProperty(IA_PROP_CHAVE_LEGADO);
       return _ok({ configurada: false, mensagem: "Chave removida." });
     }
-    PropertiesService.getScriptProperties().setProperty(IA_PROP_CHAVE, c);
+    props.setProperty(IA_PROP_CHAVE, c);
+    props.deleteProperty(IA_PROP_CHAVE_LEGADO); // consolida na chave nova
     return _ok({ configurada: true, mensagem: "Chave salva com segurança." });
   } catch (err) {
     return _fail("Erro ao salvar chave: " + err.toString());
   }
 }
 
+/** Provedor de IA selecionado (gemini | anthropic). */
+function _obterProviderIA() {
+  const p = (obterValorConfig(IA_CFG_PROVIDER) || "").trim().toLowerCase();
+  return p === "anthropic" ? "anthropic" : IA_PROVIDER_PADRAO;
+}
+
+/** Modelo configurado; se vazio, usa o padrão do provedor. */
+function _obterModeloIA() {
+  const m = (obterValorConfig(IA_CFG_MODELO) || "").trim();
+  if (m) return m;
+  return _obterProviderIA() === "anthropic" ? IA_MODELO_ANTHROPIC_PADRAO : IA_MODELO_GEMINI_PADRAO;
+}
+
+/** Diretrizes (system prompt) configuradas; se vazio, usa o padrão embutido. */
+function _obterDiretrizesIA() {
+  const d = (obterValorConfig(IA_CFG_DIRETRIZES) || "").trim();
+  return d || IA_SYSTEM_INSTRUCTION_PADRAO;
+}
+
 /** Informa ao front-end se a IA já está configurada (sem revelar a chave). */
 function iaConfigurada() {
   return _ok({ configurada: _obterChaveIA() !== "" });
+}
+
+/**
+ * Retorna a configuração atual da IA para o painel administrativo.
+ * NUNCA retorna a chave da API — apenas se está configurada.
+ */
+function obterConfigIA() {
+  return _ok({
+    configurada: _obterChaveIA() !== "",
+    provider: _obterProviderIA(),
+    modelo: _obterModeloIA(),
+    diretrizes: _obterDiretrizesIA(),
+    diretrizesPadrao: IA_SYSTEM_INSTRUCTION_PADRAO
+  });
+}
+
+/**
+ * Salva provedor, modelo e diretrizes do agente (parametrizável pelo admin).
+ * Deixar um campo vazio faz o sistema voltar ao padrão daquele campo.
+ */
+function salvarConfigIA(cfg) {
+  try {
+    if (!usuarioEhAdmin()) return _fail("Apenas administradores podem configurar a IA.");
+    cfg = cfg || {};
+    if (cfg.provider !== undefined) {
+      const p = String(cfg.provider).trim().toLowerCase();
+      salvarValorConfig(IA_CFG_PROVIDER, p === "anthropic" ? "anthropic" : "gemini");
+    }
+    if (cfg.modelo !== undefined) {
+      salvarValorConfig(IA_CFG_MODELO, String(cfg.modelo).trim());
+    }
+    if (cfg.diretrizes !== undefined) {
+      salvarValorConfig(IA_CFG_DIRETRIZES, String(cfg.diretrizes));
+    }
+    return _ok({
+      provider: _obterProviderIA(),
+      modelo: _obterModeloIA(),
+      diretrizes: _obterDiretrizesIA(),
+      mensagem: "Configurações da IA salvas."
+    });
+  } catch (err) {
+    return _fail("Erro ao salvar configurações da IA: " + err.toString());
+  }
 }
 
 /** Monta o texto do cenário do produtor sem enviar dados pessoais (sem CPF/nome). */
@@ -1860,7 +1937,7 @@ function _iaMontarCenario(ctx) {
 }
 
 /**
- * Chama a API da Anthropic para sugerir a melhor linha.
+ * Sugere a melhor linha usando o provedor de IA configurado (Gemini ou Anthropic).
  * `contexto` deve conter apenas dados não sensíveis (sem CPF/nome).
  */
 function sugerirMelhorLinhaIA(contexto) {
@@ -1871,54 +1948,134 @@ function sugerirMelhorLinhaIA(contexto) {
 
   try {
     const pergunta = _iaMontarCenario(contexto);
-    const payload = {
-      model: IA_MODELO,
-      max_tokens: 1200,
-      system: IA_SYSTEM_INSTRUCTION,
-      messages: [{ role: "user", content: pergunta }]
-    };
+    const system = _obterDiretrizesIA();
+    const provider = _obterProviderIA();
+    const modelo = _obterModeloIA();
 
-    const resp = UrlFetchApp.fetch(IA_ENDPOINT, {
-      method: "post",
-      contentType: "application/json",
-      headers: { "x-api-key": chave, "anthropic-version": "2023-06-01" },
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true
-    });
-
-    const code = resp.getResponseCode();
-    const body = resp.getContentText();
-
-    if (code === 401 || code === 403) {
-      return _fail("Chave da API inválida ou sem permissão (HTTP " + code + "). Verifique a configuração.");
+    if (provider === "anthropic") {
+      return _iaChamarAnthropic(chave, modelo, system, pergunta);
     }
-    if (code === 429) {
-      return _fail("Limite de uso da IA atingido no momento (HTTP 429). Tente novamente em instantes.");
-    }
-    if (code < 200 || code >= 300) {
-      let detalhe = "";
-      try { const e = JSON.parse(body); detalhe = (e.error && e.error.message) ? (" — " + e.error.message) : ""; } catch (x) {}
-      return _fail("Falha ao consultar a IA (HTTP " + code + ")" + detalhe);
-    }
-
-    const json = JSON.parse(body);
-    if (json.stop_reason === "refusal") {
-      return _fail("A IA não pôde responder a esta solicitação.");
-    }
-
-    let texto = "";
-    if (Array.isArray(json.content)) {
-      for (let i = 0; i < json.content.length; i++) {
-        if (json.content[i] && json.content[i].type === "text") {
-          texto += json.content[i].text;
-        }
-      }
-    }
-    texto = texto.trim();
-    if (!texto) return _fail("A IA retornou uma resposta vazia.");
-
-    return _ok({ recomendacao: texto });
+    return _iaChamarGemini(chave, modelo, system, pergunta);
   } catch (err) {
     return _fail("Erro ao consultar a IA: " + err.toString());
   }
+}
+
+/** Chamada à API do Google Gemini (generateContent). */
+function _iaChamarGemini(chave, modelo, system, pergunta) {
+  const url = IA_ENDPOINT_GEMINI_BASE + encodeURIComponent(modelo) + ":generateContent";
+
+  const generationConfig = { maxOutputTokens: 2048, temperature: 0.2 };
+  // Nos modelos "flash" o raciocínio interno consome tokens de saída; desligá-lo
+  // evita respostas vazias e reduz custo. Modelos "pro" mantêm o raciocínio.
+  if (/flash/i.test(modelo)) generationConfig.thinkingConfig = { thinkingBudget: 0 };
+
+  const payload = {
+    system_instruction: { parts: [{ text: system }] },
+    contents: [{ role: "user", parts: [{ text: pergunta }] }],
+    generationConfig: generationConfig
+  };
+
+  const resp = UrlFetchApp.fetch(url, {
+    method: "post",
+    contentType: "application/json",
+    headers: { "x-goog-api-key": chave },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+
+  const code = resp.getResponseCode();
+  const body = resp.getContentText();
+
+  if (code === 400 && /api[_ ]?key|API_KEY_INVALID/i.test(body)) {
+    return _fail("Chave da API do Gemini inválida (HTTP 400). Verifique a configuração.");
+  }
+  if (code === 401 || code === 403) {
+    return _fail("Chave da API inválida ou sem permissão (HTTP " + code + "). Verifique a configuração.");
+  }
+  if (code === 429) {
+    return _fail("Limite de uso da IA atingido no momento (HTTP 429). Tente novamente em instantes.");
+  }
+  if (code === 404) {
+    return _fail("Modelo de IA '" + modelo + "' não encontrado (HTTP 404). Ajuste o modelo na aba Configurações do Sistema.");
+  }
+  if (code < 200 || code >= 300) {
+    let detalhe = "";
+    try { const e = JSON.parse(body); detalhe = (e.error && e.error.message) ? (" — " + e.error.message) : ""; } catch (x) {}
+    return _fail("Falha ao consultar a IA (HTTP " + code + ")" + detalhe);
+  }
+
+  const json = JSON.parse(body);
+  if (json.promptFeedback && json.promptFeedback.blockReason) {
+    return _fail("A solicitação foi bloqueada pela IA (" + json.promptFeedback.blockReason + ").");
+  }
+
+  const cand = (json.candidates && json.candidates[0]) || null;
+  let texto = "";
+  if (cand && cand.content && Array.isArray(cand.content.parts)) {
+    for (let i = 0; i < cand.content.parts.length; i++) {
+      if (cand.content.parts[i] && cand.content.parts[i].text) texto += cand.content.parts[i].text;
+    }
+  }
+  texto = texto.trim();
+  if (!texto) {
+    if (cand && cand.finishReason === "MAX_TOKENS") {
+      return _fail("A resposta da IA excedeu o limite de tokens. Tente reduzir as diretrizes ou usar outro modelo.");
+    }
+    if (cand && cand.finishReason === "SAFETY") {
+      return _fail("A resposta foi bloqueada por segurança pela IA.");
+    }
+    return _fail("A IA retornou uma resposta vazia.");
+  }
+
+  return _ok({ recomendacao: texto, provedor: "gemini", modelo: modelo });
+}
+
+/** Chamada à API da Anthropic (Claude / Messages). */
+function _iaChamarAnthropic(chave, modelo, system, pergunta) {
+  const payload = {
+    model: modelo,
+    max_tokens: 1200,
+    system: system,
+    messages: [{ role: "user", content: pergunta }]
+  };
+
+  const resp = UrlFetchApp.fetch(IA_ENDPOINT_ANTHROPIC, {
+    method: "post",
+    contentType: "application/json",
+    headers: { "x-api-key": chave, "anthropic-version": "2023-06-01" },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+
+  const code = resp.getResponseCode();
+  const body = resp.getContentText();
+
+  if (code === 401 || code === 403) {
+    return _fail("Chave da API inválida ou sem permissão (HTTP " + code + "). Verifique a configuração.");
+  }
+  if (code === 429) {
+    return _fail("Limite de uso da IA atingido no momento (HTTP 429). Tente novamente em instantes.");
+  }
+  if (code < 200 || code >= 300) {
+    let detalhe = "";
+    try { const e = JSON.parse(body); detalhe = (e.error && e.error.message) ? (" — " + e.error.message) : ""; } catch (x) {}
+    return _fail("Falha ao consultar a IA (HTTP " + code + ")" + detalhe);
+  }
+
+  const json = JSON.parse(body);
+  if (json.stop_reason === "refusal") {
+    return _fail("A IA não pôde responder a esta solicitação.");
+  }
+
+  let texto = "";
+  if (Array.isArray(json.content)) {
+    for (let i = 0; i < json.content.length; i++) {
+      if (json.content[i] && json.content[i].type === "text") texto += json.content[i].text;
+    }
+  }
+  texto = texto.trim();
+  if (!texto) return _fail("A IA retornou uma resposta vazia.");
+
+  return _ok({ recomendacao: texto, provedor: "anthropic", modelo: modelo });
 }

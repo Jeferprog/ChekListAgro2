@@ -149,6 +149,8 @@
             else if (methodName === "obterChecklistDocs") resolve(["(P) Extrato DAP", "(P) CAR Recibo", "(F) CETCR", "(F) CCB"]);
             else if (methodName === "importarChecklistLinha") resolve({ sucesso: true, success: true, nome: "PRONAF CUSTEIO AGRÍCOLA Faixa I", qtdP: 10, qtdF: 7, total: 17 });
             else if (methodName === "iaConfigurada") resolve({ success: true, sucesso: true, configurada: true });
+            else if (methodName === "obterConfigIA") resolve({ success: true, sucesso: true, configurada: true, provider: "gemini", modelo: "gemini-2.5-flash", diretrizes: "Você é o Especialista em Crédito Rural e Agronegócio da Cresol. (diretrizes padrão — modo local)", diretrizesPadrao: "Você é o Especialista em Crédito Rural e Agronegócio da Cresol. (diretrizes padrão — modo local)" });
+            else if (methodName === "salvarConfigIA") resolve({ success: true, sucesso: true, provider: "gemini", modelo: "gemini-2.5-flash", mensagem: "Configurações da IA salvas." });
             else if (methodName === "salvarChaveIA") resolve({ success: true, sucesso: true, configurada: true, mensagem: "Chave salva com segurança." });
             else if (methodName === "sugerirMelhorLinhaIA") resolve({ success: true, sucesso: true, recomendacao: "1) Classificação do produtor: PRONAF.\n2) Tipo de operação: Custeio agrícola.\n3) Linha recomendada: PRONAF CUSTEIO AGRÍCOLA - Faixa I (3% a.a.), por ser a de menor taxa para milho até 25 mil, dentro do teto de R$ 250 mil.\n4) Alternativas: Faixa II (6.5% a.a.) caso a cultura não se enquadre na Faixa I.\n5) Ressalvas: confirmar DAP/CAF ativa e limite disponível no SICOR. (resposta simulada - modo local)" });
             else resolve({ success: true });
@@ -189,6 +191,10 @@
       const [iaErro, setIaErro] = useState("");
       const [chaveIA, setChaveIA] = useState("");
       const [salvandoChaveIA, setSalvandoChaveIA] = useState(false);
+      const [iaProvider, setIaProvider] = useState("gemini");
+      const [iaModelo, setIaModelo] = useState("");
+      const [iaDiretrizes, setIaDiretrizes] = useState("");
+      const [salvandoConfigIA, setSalvandoConfigIA] = useState(false);
 
       // Controle de Modais
       const [showAddModal, setShowAddModal] = useState(false);
@@ -218,11 +224,15 @@
         carregarStatusIA();
       }, []);
 
-      // Verifica se a IA já está configurada (chave cadastrada nas Script Properties)
+      // Carrega o status e a configuração da IA (provedor, modelo, diretrizes).
+      // A chave da API nunca é retornada pelo backend.
       const carregarStatusIA = async () => {
         try {
-          const r = await runGas("iaConfigurada");
+          const r = await runGas("obterConfigIA");
           setIaDisponivel(!!(r && r.configurada));
+          if (r && r.provider) setIaProvider(r.provider);
+          if (r && r.modelo !== undefined) setIaModelo(r.modelo || "");
+          if (r && r.diretrizes !== undefined) setIaDiretrizes(r.diretrizes || "");
         } catch (e) {
           setIaDisponivel(false);
         }
@@ -560,6 +570,29 @@
           alert(String((e && e.message) || e || "Erro ao salvar a chave."));
         } finally {
           setSalvandoChaveIA(false);
+        }
+      };
+
+      // Administrador: salva provedor, modelo e diretrizes do agente de IA
+      const handleSalvarConfigIA = async () => {
+        setSalvandoConfigIA(true);
+        try {
+          const r = await runGas("salvarConfigIA", {
+            provider: iaProvider,
+            modelo: iaModelo.trim(),
+            diretrizes: iaDiretrizes
+          });
+          if (r && (r.success || r.sucesso)) {
+            if (r.modelo !== undefined) setIaModelo(r.modelo || "");
+            if (r.diretrizes !== undefined) setIaDiretrizes(r.diretrizes || "");
+            alert(r.mensagem || "Configurações da IA salvas.");
+          } else {
+            alert((r && (r.error || r.erro)) || "Não foi possível salvar as configurações da IA.");
+          }
+        } catch (e) {
+          alert(String((e && e.message) || e || "Erro ao salvar configurações da IA."));
+        } finally {
+          setSalvandoConfigIA(false);
         }
       };
 
@@ -1716,7 +1749,7 @@
                     <h2 className="text-sm font-bold text-primary-green uppercase tracking-wider">Agente de IA — Sugestão de Linhas</h2>
                   </div>
 
-                  <div className="flex flex-col gap-3 max-w-xl">
+                  <div className="flex flex-col gap-4 max-w-2xl">
                     <div className="flex items-center gap-2 text-xs">
                       <span className="font-bold text-text-dark">Status:</span>
                       {iaDisponivel ? (
@@ -1726,31 +1759,96 @@
                       )}
                     </div>
 
-                    <label className="text-xs font-bold text-text-dark">Chave da API (Anthropic)</label>
-                    <p className="text-[10px] text-text-gray font-light -mt-1">
-                      A chave é armazenada com segurança no servidor (Script Properties) e nunca aparece na planilha nem no código.
-                      Ao consultar a IA, são enviados apenas dados de enquadramento (renda, finalidade, tipo de pessoa) — nunca CPF ou nome do associado.
-                    </p>
-                    <div className="flex gap-2">
-                      <input
-                        type="password"
-                        value={chaveIA}
-                        onChange={e => setChaveIA(e.target.value)}
-                        placeholder={iaDisponivel ? "•••••••• (deixe em branco para manter)" : "Cole aqui a chave da API"}
-                        autoComplete="off"
-                        className="flex-1 text-xs border border-border-gray rounded px-3 py-2 focus:outline-none"
+                    {/* Provedor + Modelo */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-bold text-text-dark">Provedor de IA</label>
+                        <select
+                          value={iaProvider}
+                          onChange={e => {
+                            const p = e.target.value;
+                            setIaProvider(p);
+                            // Sugere o modelo padrão ao trocar de provedor, se o campo estiver vazio
+                            if (!iaModelo.trim()) setIaModelo(p === "anthropic" ? "claude-opus-4-8" : "gemini-2.5-flash");
+                          }}
+                          className="text-xs border border-border-gray rounded px-3 py-2 focus:outline-none bg-white"
+                        >
+                          <option value="gemini">Google Gemini</option>
+                          <option value="anthropic">Anthropic Claude</option>
+                        </select>
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-bold text-text-dark">Modelo</label>
+                        <input
+                          type="text"
+                          value={iaModelo}
+                          onChange={e => setIaModelo(e.target.value)}
+                          placeholder={iaProvider === "anthropic" ? "claude-opus-4-8" : "gemini-2.5-flash"}
+                          className="text-xs border border-border-gray rounded px-3 py-2 focus:outline-none"
+                        />
+                        <span className="text-[10px] text-text-gray font-light">
+                          Deixe em branco para usar o modelo padrão do provedor.
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Diretrizes do agente (parametrizável) */}
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-bold text-text-dark">Diretrizes do Agente (regras e base de linhas)</label>
+                      <p className="text-[10px] text-text-gray font-light -mt-0.5">
+                        Instruções que o agente segue ao recomendar linhas. Edite as taxas, faixas e limites conforme a política vigente.
+                        Deixe em branco para restaurar as diretrizes padrão do sistema.
+                      </p>
+                      <textarea
+                        value={iaDiretrizes}
+                        onChange={e => setIaDiretrizes(e.target.value)}
+                        rows={12}
+                        placeholder="Diretrizes do agente especialista de crédito..."
+                        className="text-xs border border-border-gray rounded px-3 py-2 focus:outline-none font-mono leading-relaxed"
                       />
-                      <button
-                        onClick={handleSalvarChaveIA}
-                        disabled={salvandoChaveIA || !chaveIA.trim()}
-                        className={`text-xs font-bold px-3 py-2 rounded transition-all ${
-                          chaveIA.trim() && !salvandoChaveIA
-                            ? "bg-primary-green text-white hover:bg-opacity-95"
-                            : "bg-slate-200 text-text-gray cursor-not-allowed"
-                        }`}
-                      >
-                        {salvandoChaveIA ? "Salvando..." : "Salvar Chave"}
-                      </button>
+                      <div className="flex justify-end">
+                        <button
+                          onClick={handleSalvarConfigIA}
+                          disabled={salvandoConfigIA}
+                          className={`text-xs font-bold px-4 py-2 rounded transition-all ${
+                            salvandoConfigIA ? "bg-slate-200 text-text-gray cursor-not-allowed" : "bg-primary-green text-white hover:bg-opacity-95"
+                          }`}
+                        >
+                          {salvandoConfigIA ? "Salvando..." : "Salvar Provedor, Modelo e Diretrizes"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Chave da API */}
+                    <div className="border-t border-border-gray/60 pt-4 flex flex-col gap-1.5">
+                      <label className="text-xs font-bold text-text-dark">
+                        Chave da API ({iaProvider === "anthropic" ? "Anthropic" : "Google Gemini"})
+                      </label>
+                      <p className="text-[10px] text-text-gray font-light -mt-1">
+                        A chave é armazenada com segurança no servidor (Script Properties) e nunca aparece na planilha nem no código.
+                        Ao consultar a IA, são enviados apenas dados de enquadramento (renda, finalidade, tipo de pessoa) — nunca CPF ou nome do associado.
+                      </p>
+                      <div className="flex gap-2">
+                        <input
+                          type="password"
+                          value={chaveIA}
+                          onChange={e => setChaveIA(e.target.value)}
+                          placeholder={iaDisponivel ? "•••••••• (deixe em branco para manter)" : "Cole aqui a chave da API"}
+                          autoComplete="off"
+                          className="flex-1 text-xs border border-border-gray rounded px-3 py-2 focus:outline-none"
+                        />
+                        <button
+                          onClick={handleSalvarChaveIA}
+                          disabled={salvandoChaveIA || !chaveIA.trim()}
+                          className={`text-xs font-bold px-3 py-2 rounded transition-all ${
+                            chaveIA.trim() && !salvandoChaveIA
+                              ? "bg-primary-green text-white hover:bg-opacity-95"
+                              : "bg-slate-200 text-text-gray cursor-not-allowed"
+                          }`}
+                        >
+                          {salvandoChaveIA ? "Salvando..." : "Salvar Chave"}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
