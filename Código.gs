@@ -1912,9 +1912,12 @@ function _iaMontarCenario(ctx) {
     linhas.push("- Valor já tomado em outras linhas (R$, inclui ProAgro): " + ctx.valorTomado);
 
   const elegiveis = Array.isArray(ctx.linhasElegiveis) ? ctx.linhasElegiveis : [];
+  const houveSimulacao = ctx.simulacaoRealizada === true;
+
   if (elegiveis.length) {
+    // O sistema aplicou as regras e encontrou linhas disponíveis.
     linhas.push("");
-    linhas.push("LINHAS ELEGÍVEIS JÁ FILTRADAS PELO SISTEMA PARA ESTE PRODUTOR:");
+    linhas.push("VEREDITO DO SISTEMA: " + elegiveis.length + " linha(s) ELEGÍVEL(is) após aplicar as regras (grupo de enquadramento, renda, tipo de pessoa, cultura/tags e limite disponível descontado o valor já tomado):");
     elegiveis.forEach(function (l, i) {
       const partes = [];
       if (l.nome) partes.push(l.nome);
@@ -1926,13 +1929,29 @@ function _iaMontarCenario(ctx) {
         partes.push("saldo disponível: " + l.saldoDisponivel);
       linhas.push((i + 1) + ") " + partes.join(" | "));
     });
-  } else {
     linhas.push("");
-    linhas.push("O sistema não enviou linhas pré-filtradas; use a base de dados das diretrizes.");
+    linhas.push("Recomende a melhor opção ENTRE as linhas elegíveis acima (menor custo e prazo adequado).");
+    linhas.push("");
+    linhas.push("Pergunta: qual a melhor linha de crédito (menor custo e prazo adequado) para este produtor?");
+  } else if (houveSimulacao) {
+    // O sistema aplicou as regras e NÃO encontrou nenhuma linha disponível.
+    linhas.push("");
+    linhas.push("VEREDITO DO SISTEMA: NENHUMA linha ficou disponível para este cenário. O sistema aplicou as regras vigentes (grupo de enquadramento, renda, tipo de pessoa, cultura/tags e, principalmente, o limite disponível após descontar o valor já tomado) e nenhuma linha do grupo atendeu.");
+    linhas.push("");
+    linhas.push("INSTRUÇÕES OBRIGATÓRIAS PARA ESTE CASO:");
+    linhas.push("- NÃO apresente nenhuma linha como disponível ou aprovada — isso contrariaria o resultado do sistema.");
+    linhas.push("- Explique, de forma objetiva, os prováveis MOTIVOS da ausência de enquadramento (ex.: limite de crédito do grupo já esgotado pelo valor tomado, renda fora da faixa, requisitos/cultura não atendidos).");
+    linhas.push("- Se pertinente, indique o que o analista poderia REAVALIAR (ex.: verificar se há saldo em outro grupo/programa, considerar a próxima safra, reduzir o valor pretendido, revisar operações já liquidadas), sempre deixando claro que são hipóteses a confirmar.");
+    linhas.push("");
+    linhas.push("Pergunta: por que este produtor não tem linha disponível e o que o analista pode reavaliar?");
+  } else {
+    // Chamada sem simulação prévia (fallback): usar a base das diretrizes.
+    linhas.push("");
+    linhas.push("O sistema não enviou o resultado de uma simulação; use a base de dados das diretrizes como referência.");
+    linhas.push("");
+    linhas.push("Pergunta: qual a melhor linha de crédito (menor custo e prazo adequado) para este produtor?");
   }
 
-  linhas.push("");
-  linhas.push("Pergunta: qual a melhor linha de crédito (menor custo e prazo adequado) para este produtor?");
   return linhas.join("\n");
 }
 

@@ -530,6 +530,10 @@
             finalidade: paramFinalidade || "",
             produto: paramProduto || "",
             valorTomado: parseFloat(customValorTomado) || 0,
+            // O botão só aparece após simular, então aqui houve simulação.
+            // Lista vazia = o sistema NÃO encontrou linha (a IA deve respeitar isso).
+            simulacaoRealizada: searchPerformed,
+            qtdElegiveis: (searchResult || []).length,
             linhasElegiveis: (searchResult || []).map(l => ({
               nome: l.nome,
               orgao: l.orgao,
@@ -1448,7 +1452,7 @@
                         {iaRecomendacao && (
                           <div className="mt-2 bg-[#f0f9f4] border border-primary-green/30 p-4 rounded-lg">
                             <div className="flex items-center gap-1.5 text-primary-green font-bold text-xs mb-2">
-                              <span>🤖 Sugestão do Especialista de Crédito (IA)</span>
+                              <span>🤖 {searchResult.length === 0 ? "Análise do Especialista de Crédito (IA) — sem enquadramento automático" : "Sugestão do Especialista de Crédito (IA)"}</span>
                             </div>
                             <p className="text-xs text-text-dark whitespace-pre-wrap leading-relaxed">{iaRecomendacao}</p>
                             <p className="text-[10px] text-text-gray font-light mt-3 border-t border-primary-green/20 pt-2">
