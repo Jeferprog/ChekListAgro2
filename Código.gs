@@ -1733,7 +1733,7 @@ function _gravarCreditoMatriz(valores) {
   const usarNomes = cpfIdx !== -1;
 
   // Posições fixas (base 0) do layout SICOR/CACR
-  const P = { cpf: 22, safra: 2, produto: 6, atividade: 18, ifFin: 10, valFin: 3, aliq: 27 };
+  const P = { cpf: 22, safra: 2, produto: 6, atividade: 18, finalidade: 11, ifFin: 10, valFin: 3, aliq: 27 };
 
   const rows = [];
   for (let r = 1; r < valores.length; r++) {
