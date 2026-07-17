@@ -1332,7 +1332,9 @@ function _cresolParseBloco(b) {
     ]).join(" "),
     requisitos: _cresolSection(b, "Requisitos:", ["Tipos:", "Financiamento:"]),
     financia: _cresolSection(b, "O que financia:", ["Produtos Beneficiados:", "Sistemática:", "Garantias:"]),
-    produtos: _cresolSection(b, "Produtos Beneficiados:", ["Sistemática:", "Taxas e Encargos:", "Garantias:"])
+    produtos: _cresolSection(b, "Produtos Beneficiados:", ["Sistemática:", "Taxas e Encargos:", "Garantias:"]),
+    modalidades: _cresolModalidades(b),
+    restricoes: _cresolRestricoes(b)
   };
 }
 
@@ -1366,6 +1368,48 @@ function _cresolNumTaxa(t) {
   if (!m) return 0;
   const n = parseFloat(m[1].replace(",", "."));
   return isNaN(n) ? 0 : n;
+}
+
+/**
+ * Garante o símbolo "%" em números de taxa que vieram sem ele
+ * (ex.: "Taxas Aplicadas 0.08" -> "Taxas Aplicadas 0.08%").
+ * Preserva valores monetários (R$) e números seguidos de unidades
+ * (meses, dias, anos, x) e não duplica "%" onde já existe.
+ */
+function _cresolFormatarTaxaTexto(txt) {
+  if (!txt) return "";
+  return String(txt).replace(
+    /(R\$\s*)?(\d+(?:[.,]\d+)?)(\s*)(%|p\.?p|meses|mes|dias|dia|anos|ano|vezes|vez|x\b)?/gi,
+    function (match, cifrao, num, esp, unidade) {
+      if (cifrao) return match;                 // valor monetário -> não é taxa
+      if (unidade) return match;                // já tem % ou tem unidade -> mantém
+      return num + "%" + (esp || "");           // número solto -> adiciona % (preserva espaço)
+    }
+  );
+}
+
+/**
+ * Captura a informação de "Modalidades Colmeia" (conteúdo abaixo do título).
+ * Tenta o rótulo específico e recai para "Modalidades".
+ */
+function _cresolModalidades(b) {
+  const fim = [
+    "Normas", "Circular", "Garantias", "Restrições", "Restricoes", "IOF",
+    "Limite", "Limites e Prazos", "Prazo", "Taxa", "Requisitos", "Tipos:",
+    "O que financia", "Produtos Beneficiados", "Sistemática", "Percentual"
+  ];
+  let sec = _cresolSection(b, "Modalidades Colmeia", fim);
+  if (!sec.length) sec = _cresolSection(b, "Modalidades", fim);
+  return sec.join(" ").replace(/^Colmeia\s*:?\s*/i, "").replace(/^:\s*/, "").trim();
+}
+
+/** Captura o texto de "Restrições" da linha. */
+function _cresolRestricoes(b) {
+  return _cresolSection(b, "Restrições", [
+    "Normas", "Circular", "Modalidades", "Garantias", "IOF", "Limite",
+    "Limites e Prazos", "Prazo", "Taxa", "Requisitos", "Tipos:",
+    "O que financia", "Produtos Beneficiados", "Sistemática", "Percentual"
+  ]).join(" ").replace(/^:\s*/, "").trim();
 }
 
 function _cresolNumLimite(t) {
@@ -1436,11 +1480,13 @@ function _cresolDocumentos(pub) {
 function _cresolObs(rec) {
   const p = [];
   if (rec.objetivo) p.push(rec.objetivo);
+  if (rec.modalidades) p.push("Modalidades Colmeia: " + rec.modalidades);
   if (rec.sistematica) p.push("Sistemática: " + rec.sistematica);
   if (rec.iof) p.push("IOF: " + rec.iof);
   if (rec.prazo) p.push("Prazo: " + rec.prazo);
+  if (rec.restricoes) p.push("Restrições: " + rec.restricoes);
   if (rec.circular) p.push("Norma: " + rec.circular);
-  return p.join(" | ").substring(0, 600);
+  return p.join(" | ").substring(0, 1000);
 }
 
 function _cresolMapear(rec, idNum) {
@@ -1460,7 +1506,7 @@ function _cresolMapear(rec, idNum) {
     status, new Date(), _cresolObs(rec),
     (rec.financia.join("; ")).substring(0, 900),
     (rec.produtos.join(", ")).substring(0, 1500),
-    String(rec.taxaTexto || rec.taxa || "").substring(0, 800),
+    _cresolFormatarTaxaTexto(String(rec.taxaTexto || rec.taxa || "")).substring(0, 800),
     _cresolTipoPessoa(rec.tipos)
   ];
 }
@@ -1872,11 +1918,11 @@ const IA_SYSTEM_INSTRUCTION_PADRAO =
 "* Bioeconomia Solar (3% a.a.): Sistemas fotovoltaicos, somente via Finame.\n\n" +
 "ORIENTAÇÕES OPERACIONAIS:\n" +
 "- Quando o sistema informar as linhas ELEGÍVEIS já filtradas para este produtor, priorize recomendar entre elas; se nenhuma delas atender bem, explique o motivo e indique a linha da base acima que melhor se aplica.\n" +
-"- ANÁLISE DE LIMITES: separe SEMPRE as operações de CUSTEIO das de INVESTIMENTO no histórico SICOR. Investimento (tratores, máquinas, benfeitorias) tem limite próprio e NÃO consome o limite de custeio. Calcule a margem remanescente de custeio como: (teto de custeio do grupo) − (total de custeio já tomado, com ProAgro). O valor máximo do novo contrato de custeio é essa margem.\n" +
+"- RACIOCÍNIO INTERNO (não repita no texto): separe as operações de CUSTEIO das de INVESTIMENTO no histórico SICOR. Investimento (tratores, máquinas, benfeitorias) tem limite próprio e NÃO consome o limite de custeio. A margem remanescente de custeio = (teto de custeio do grupo) − (total de custeio já tomado, com ProAgro). O valor máximo do novo contrato de custeio é essa margem. Use esse cálculo para definir o valor recomendado, mas NÃO reexponha o perfil do associado nem a análise de limites — o sistema já os exibe na tela.\n" +
 "- TRAVA DO SICOR: alerte que o SICOR bloqueia contratações de custeio que superem a margem remanescente na safra; o valor proposto deve ser menor ou igual a esse saldo.\n" +
 "- ESTRATÉGIA HÍBRIDA: se a necessidade do produtor superar a margem do PRONAF, sugira operação complementar (ex.: contratar a margem no PRONAF à menor taxa e o excedente no PRONAMP, priorizando a modalidade Sustentável quando aplicável), sempre que o produtor também se enquadrar no outro programa.\n" +
-"- Sua resposta é um apoio à decisão do analista, não uma aprovação de crédito. Seja objetivo, mas completo.\n" +
-"- Responda em português do Brasil, de forma organizada, cobrindo quando fizer sentido: Perfil do associado e enquadramento; Análise de limites (custeio vs investimento e margem remanescente); Linha recomendada e justificativa; Condições financeiras (taxa, limite para o contrato, IOF quando conhecido); Prazo e carência sugeridos; Regras e cuidados (trava do SICOR, ProAgro/seguro, documentação); Alternativa próxima / estratégia híbrida se a demanda superar a margem.";
+"- Sua resposta é um apoio à decisão do analista, não uma aprovação de crédito.\n" +
+"- SEJA CONCISO e vá direto à recomendação. NÃO inclua seções de 'Perfil do associado' nem 'Análise de limites' (o sistema já mostra isso). Responda em português do Brasil cobrindo apenas: 1) Linha recomendada e justificativa (menor taxa, prazo adequado); 2) Condições financeiras (taxa; valor máximo para este contrato respeitando a margem; IOF quando conhecido); 3) Prazo e carência sugeridos; 4) Cuidados essenciais (trava do SICOR, ProAgro/seguro, documento-chave); 5) Alternativa / estratégia híbrida apenas se a demanda superar a margem.";
 
 /** Lê a chave da API das Script Properties (nunca fica na planilha nem no código). */
 function _obterChaveIA() {

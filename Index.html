@@ -1608,6 +1608,11 @@
                               <div>
                                 <strong>Requisitos Específicos:</strong> {l.requisitos || "Apresentação de documentação regular básica"}
                               </div>
+                              {l.observacoes && (
+                                <div className="whitespace-pre-wrap">
+                                  <strong>Observações / Modalidades / Restrições:</strong> {l.observacoes}
+                                </div>
+                              )}
                             </div>
                           </div>
                         ))}
@@ -2078,6 +2083,9 @@
                       <div className="mt-2.5 text-xs flex flex-col gap-1 text-text-gray bg-slate-50 p-2.5 rounded border border-border-gray/40 font-light">
                         <div><strong>Itens Financiáveis:</strong> {checklistLine.itensFinanciaveis || "Gerais para a modalidade"}</div>
                         <div><strong>Requisitos:</strong> {checklistLine.requisitos || "Documentação regular básica"}</div>
+                        {checklistLine.observacoes && (
+                          <div className="whitespace-pre-wrap"><strong>Observações / Modalidades / Restrições:</strong> {checklistLine.observacoes}</div>
+                        )}
                       </div>
                     </div>
                   )}
